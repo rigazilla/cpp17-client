@@ -20,6 +20,7 @@ find_package(OpenSSL REQUIRED)
 set(SOURCES
     src/codec/Codec.cpp
     src/codec/HeaderCodec.cpp
+    src/auth/SCRAM.cpp
     src/transport/Connection.cpp
 )
 
@@ -54,6 +55,7 @@ if(GTest_FOUND)
     add_executable(unit_tests
         tests/unit/CodecTest.cpp
         tests/unit/HeaderCodecTest.cpp
+        tests/unit/SCRAMTest.cpp
     )
 
     target_link_libraries(unit_tests
