@@ -1,0 +1,99 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-linux:
+    name: Linux (Ubuntu)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ libssl-dev libgtest-dev
+
+      - name: Configure CMake
+        run: |
+          mkdir build
+          cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          cd build
+          make -j$(nproc)
+
+      - name: Run unit tests
+        run: |
+          cd build
+          ctest --output-on-failure
+
+  test-windows:
+    name: Windows
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: 'a42af01b72c28a8e1d7b48107b33e4f286a55ef6'
+
+      - name: Install dependencies
+        run: |
+          vcpkg install openssl:x64-windows gtest:x64-windows
+
+      - name: Configure CMake
+        run: |
+          mkdir build
+          cd build
+          cmake .. -DCMAKE_TOOLCHAIN_FILE=${{github.workspace}}/vcpkg/scripts/buildsystems/vcpkg.cmake -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          cd build
+          cmake --build . --config Release
+
+      - name: Run unit tests
+        run: |
+          cd build
+          ctest -C Release --output-on-failure
+
+  test-fedora:
+    name: Linux (Fedora)
+    runs-on: ubuntu-latest
+    container: fedora:latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install dependencies
+        run: |
+          dnf install -y cmake gcc-c++ openssl-devel gtest-devel
+
+      - name: Configure CMake
+        run: |
+          mkdir build
+          cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          cd build
+          make -j$(nproc)
+
+      - name: Run unit tests
+        run: |
+          cd build
+          ctest --output-on-failure
