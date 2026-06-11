@@ -3,7 +3,7 @@
 **Language**: C++17  
 **Started**: 2026-06-11  
 **Last Updated**: 2026-06-11  
-**Current Step**: Step 2 (Protocol Headers) - Ready to start
+**Current Step**: Step 3 (Authentication) - Ready to start
 
 ## Completion Status
 
@@ -11,7 +11,7 @@
 |------|--------|-----------|------------|-------|
 | 0. Foundation | ✅ Done | 2026-06-11 | ✅ | Project setup, CI/CD |
 | 1. Primitives | ✅ Done | 2026-06-11 | ✅ 39/39 | vInt, vLong, strings |
-| 2. Headers | ⏳ Not Started | - | - | Protocol 4.0 headers |
+| 2. Headers | ✅ Done | 2026-06-11 | ✅ 19/19 | Protocol 4.0 complete |
 | 3. Authentication | ⏳ Not Started | - | - | SCRAM-SHA-256 |
 | 4. Topology | ⏳ Not Started | - | - | Cluster awareness |
 | 5. Hashing | ⏳ Not Started | - | - | Consistent hashing |
@@ -33,9 +33,9 @@
 
 ## Test Results
 
-- Unit Tests: 39/39 passing ✅
+- Unit Tests: 58/58 passing ✅ (39 codec + 19 header)
 - Integration Tests: 0/0 (not implemented yet)
-- Test Vector Validation: 100% (Step 1 complete - all test vectors validated)
+- Test Vector Validation: 100% (Steps 1-2 complete)
 
 ## Known Issues
 
@@ -88,6 +88,42 @@ None currently.
 - vLong: 5 encoding tests + 1 round-trip test
 - String: 5 encoding tests + 3 round-trip tests (including UTF-8)
 - Byte array: 3 encoding tests + 2 round-trip tests
+
+### Step 2 Completion (2026-06-11) ✅
+- ✅ Studied Java reference: Codec40.java, Codec30.java
+- ✅ Studied Kaitai schema: hotrod40.ksy (lines 315-365)
+- ✅ Request header encoding (Protocol 4.0 COMPLETE spec)
+- ✅ Response header decoding
+- ✅ ALL conditional fields implemented (CRITICAL for 4.0):
+  - ✅ Media types (key_media_type, value_media_type) if version >= 0x28
+  - ✅ Other param count (other_param_count) if version >= 40
+  - ✅ Other params (key-value pairs) if count > 0
+- ✅ Magic byte validation (0xA0 request, 0xA1 response)
+- ✅ Client intelligence levels (BASIC, TOPOLOGY_AWARE, HASH_AWARE)
+- ✅ 19 unit tests all passing
+- ✅ Request header tests: PING, GET, PUT, REMOVE, AUTH_MECH_LIST
+- ✅ Response header tests: Success, errors, topology changes
+- ✅ Error handling tests (invalid magic, buffer overruns)
+- ✅ Large message ID support (vLong encoding)
+- ✅ Named cache support
+- ✅ Flags support
+- 🎉 Protocol 4.0 headers complete!
+
+**Critical Implementation Detail:**
+The Protocol 4.0 header has 11 fields (not 8 as in older test vectors):
+1. Magic (0xA0)
+2. Message ID (vLong)
+3. Version (0x28)
+4. Opcode
+5. Cache Name (string)
+6. Flags (vInt)
+7. Client Intelligence
+8. Topology ID (vInt)
+9. **Key Media Type** ← REQUIRED for 4.0
+10. **Value Media Type** ← REQUIRED for 4.0
+11. **Other Param Count** ← REQUIRED for 4.0 (usually 0)
+
+Missing fields 9-11 causes server timeout!
 
 ### Design Decisions
 - Using C++17 for broad compiler support

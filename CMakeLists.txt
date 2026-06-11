@@ -19,6 +19,7 @@ find_package(OpenSSL REQUIRED)
 # Library source files
 set(SOURCES
     src/codec/Codec.cpp
+    src/codec/HeaderCodec.cpp
     src/transport/Connection.cpp
 )
 
@@ -52,6 +53,7 @@ if(GTest_FOUND)
     # Unit tests
     add_executable(unit_tests
         tests/unit/CodecTest.cpp
+        tests/unit/HeaderCodecTest.cpp
     )
 
     target_link_libraries(unit_tests
