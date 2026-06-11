@@ -25,6 +25,7 @@ set(SOURCES
     src/hash/MurmurHash3.cpp
     src/hash/ConsistentHash.cpp
     src/transport/Connection.cpp
+    src/operations/RemoteCache.cpp
 )
 
 # Create library
@@ -62,6 +63,7 @@ if(GTest_FOUND)
         tests/unit/TopologyInfoTest.cpp
         tests/unit/MurmurHash3Test.cpp
         tests/unit/ConsistentHashTest.cpp
+        tests/unit/PingTest.cpp
     )
 
     target_link_libraries(unit_tests
@@ -73,7 +75,21 @@ if(GTest_FOUND)
 
     add_test(NAME UnitTests COMMAND unit_tests)
 
-    message(STATUS "Google Test found - unit tests enabled")
+    # Integration tests (require running Infinispan server)
+    add_executable(integration_tests
+        tests/integration/PingIntegrationTest.cpp
+    )
+
+    target_link_libraries(integration_tests
+        PRIVATE
+            hotrod-client
+            GTest::gtest
+            GTest::gtest_main
+    )
+
+    add_test(NAME IntegrationTests COMMAND integration_tests)
+
+    message(STATUS "Google Test found - unit tests and integration tests enabled")
 else()
     message(WARNING "Google Test not found - tests disabled")
 endif()
