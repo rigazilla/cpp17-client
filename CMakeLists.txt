@@ -21,6 +21,9 @@ set(SOURCES
     src/codec/Codec.cpp
     src/codec/HeaderCodec.cpp
     src/auth/SCRAM.cpp
+    src/topology/TopologyInfo.cpp
+    src/hash/MurmurHash3.cpp
+    src/hash/ConsistentHash.cpp
     src/transport/Connection.cpp
 )
 
@@ -56,6 +59,9 @@ if(GTest_FOUND)
         tests/unit/CodecTest.cpp
         tests/unit/HeaderCodecTest.cpp
         tests/unit/SCRAMTest.cpp
+        tests/unit/TopologyInfoTest.cpp
+        tests/unit/MurmurHash3Test.cpp
+        tests/unit/ConsistentHashTest.cpp
     )
 
     target_link_libraries(unit_tests
