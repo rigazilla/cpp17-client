@@ -50,6 +50,21 @@ public:
     bool ping();
 
     /**
+     * GET operation - retrieve value for key.
+     *
+     * Opcode: 0x03 (GET_REQUEST) → 0x04 (GET_RESPONSE)
+     *
+     * @param key The key as raw bytes
+     * @param value Output parameter for the value (if found)
+     * @return true if key exists, false if not found
+     * @throws std::runtime_error on communication errors
+     *
+     * Reference:
+     * - Java: org.infinispan.client.hotrod.impl.operations.GetOperation
+     */
+    bool get(const ByteArray& key, ByteArray& value);
+
+    /**
      * Close connection to server.
      */
     void disconnect();

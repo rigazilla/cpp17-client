@@ -225,4 +225,77 @@ bool RemoteCache::ping() {
     return true;
 }
 
+bool RemoteCache::get(const ByteArray& key, ByteArray& value) {
+    // Build GET request header
+    RequestHeader header;
+    header.messageId = nextMessageId();
+    header.version = 0x28;  // Protocol 4.0
+    header.opcode = 0x03;   // GET_REQUEST
+    header.cacheName = cacheName_;
+    header.flags = 0;
+    header.clientIntelligence = ClientIntelligence::BASIC;  // TODO: Use HASH_AWARE when topology is integrated
+    header.topologyId = 0;  // TODO: Track topology ID
+    header.keyMediaType = 0;
+    header.valueMediaType = 0;
+    // otherParams empty (count = 0)
+
+    // Encode request header + key
+    ByteArray request;
+    HeaderCodec::writeRequestHeader(request, header);
+
+    // Write key as lp_bytes (vInt length + bytes)
+    Codec::writeByteArray(request, key);
+
+    // Send and receive response
+    ByteArray response = sendRequest(request);
+
+    // Parse response header
+    size_t offset = 0;
+    ResponseHeader respHeader = HeaderCodec::readResponseHeader(response, offset);
+
+    // Verify response
+    if (respHeader.opcode != 0x04) {  // GET_RESPONSE
+        throw std::runtime_error("Unexpected response opcode: " + std::to_string(respHeader.opcode));
+    }
+
+    if (respHeader.messageId != header.messageId) {
+        throw std::runtime_error("Message ID mismatch");
+    }
+
+    // Status codes:
+    // 0x00 = NO_ERROR (key found)
+    // 0x01 = KEY_DOES_NOT_EXIST
+    // 0x02 = NOT_FOUND (cache-level not found, different from key not found)
+    if (respHeader.status == 0x01 || respHeader.status == 0x02) {
+        // Key not found
+        value.clear();
+        return false;
+    }
+
+    if (respHeader.status != 0x00) {
+        throw std::runtime_error("GET failed with status: " + std::to_string(respHeader.status));
+    }
+
+    // Read value from response body (lp_bytes: vInt length + bytes)
+    // The response body is NOT in the response ByteArray - we only read the header!
+    // Need to read the value directly from the socket.
+
+    // Read vInt length
+    VInt valueLength = 0;
+    while (true) {
+        ByteArray b = connection_->receive(1);
+        valueLength = (valueLength << 7) | (b[0] & 0x7F);
+        if ((b[0] & 0x80) == 0) break;
+    }
+
+    // Read value bytes
+    if (valueLength > 0) {
+        value = connection_->receive(valueLength);
+    } else {
+        value.clear();
+    }
+
+    return true;
+}
+
 } // namespace hotrod
