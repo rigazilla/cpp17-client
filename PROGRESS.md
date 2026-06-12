@@ -34,7 +34,7 @@
 ## Test Results
 
 - Unit Tests: **123/123 passing** ✅ (39 codec + 19 header + 10 SCRAM + 15 topology + 31 hashing + 9 PING)
-- Integration Tests: 5 tests created (manual - requires Infinispan server)
+- Integration Tests: **5/5 passing** ✅ (automated with GoogleTest + bash scripts)
 - Test Vector Validation: 100% (Steps 1-6 complete)
 
 ## Known Issues
@@ -299,6 +299,44 @@ primaryOwner = segmentOwners[segment][0]
 - Java: org.infinispan.client.hotrod.impl.operations.PingOperation
 - Java: org.infinispan.client.hotrod.RemoteCache
 - Test vectors: step-03-ping/ping-test-cases.json
+- Kaitai schema: hotrod40.ksy (ping_response structure)
+
+### Integration Test Framework (2026-06-12) ✅
+- ✅ Bash script framework for server lifecycle
+- ✅ GoogleTest global environment integration
+- ✅ Anonymous server configuration (XML without authentication)
+- ✅ Automatic server start/stop (one container for all tests)
+- ✅ Port auto-discovery via Docker
+- ✅ Cross-platform scripts (Linux + Windows compatible)
+- ✅ 5/5 integration tests passing
+
+**Scripts:**
+- `scripts/start_infinispan_noauth.sh` - Start anonymous server
+- `scripts/stop_infinispan.sh` - Stop and cleanup container
+
+**Configuration:**
+- `test-configs/infinispan-noauth.xml` - Anonymous mode configuration
+  - No authentication required
+  - No authorization
+  - Proper socket bindings for Hot Rod endpoint
+
+**GoogleTest Environment:**
+- `tests/integration/InfinispanTestEnvironment.h` - Global test environment
+  - Server lifecycle management (SetUp/TearDown)
+  - Static members for host/port/containerID
+  - Automatic cleanup on test completion
+
+**PING Response Parsing:**
+- Fixed response body consumption (media types, server version, supported opcodes)
+- Proper socket buffer management for multiple requests
+- Complete implementation per Kaitai schema hotrod40.ksy
+
+**Integration Test Coverage:**
+- BasicPing - Simple PING to default cache
+- PingWithEmptyCacheName - PING with empty cache name
+- MultiplePings - 10 consecutive PINGs on same connection
+- PingAfterDisconnect - Error handling test
+- ReconnectAndPing - Connection reuse test
 
 ---
 

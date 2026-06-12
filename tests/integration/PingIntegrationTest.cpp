@@ -1,52 +1,21 @@
 #include <gtest/gtest.h>
 #include "hotrod/RemoteCache.h"
-#include <iostream>
-
-/**
- * PING Integration Tests
- *
- * These tests require a running Infinispan server.
- *
- * Manual testing:
- *   docker run -d -p 11222:11222 -e USER=admin -e PASS=password infinispan/server:16.0
- *   ./build/integration_tests
- *
- * TODO: Use Testcontainers library for automatic server lifecycle
- */
+#include "InfinispanTestEnvironment.h"
 
 using namespace hotrod;
+using namespace hotrod::test;
 
-// Helper: Check if server is available
-bool isServerAvailable(const std::string& host, uint16_t port) {
-    try {
-        RemoteCache cache(host, port);
-        cache.connect();
-        cache.disconnect();
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
-
-class PingIntegrationTest : public ::testing::Test {
-protected:
-    static constexpr const char* TEST_HOST = "localhost";
-    static constexpr uint16_t TEST_PORT = 11222;
-
-    void SetUp() override {
-        // Check if server is available
-        if (!isServerAvailable(TEST_HOST, TEST_PORT)) {
-            GTEST_SKIP() << "Infinispan server not available at "
-                         << TEST_HOST << ":" << TEST_PORT
-                         << ". Start with: docker run -d -p 11222:11222 "
-                         << "-e USER=admin -e PASS=password infinispan/server:16.0";
-        }
-    }
-};
+/**
+ * PING Integration Tests - No Authentication
+ *
+ * Tests run against Infinispan server managed by InfinispanTestEnvironment.
+ * Server lifecycle: SetUp once before all tests, TearDown once after all tests.
+ */
 
 // Test 1: Basic PING to default cache
-TEST_F(PingIntegrationTest, BasicPing) {
-    RemoteCache cache(TEST_HOST, TEST_PORT);
+TEST(PingIntegrationTest, BasicPing) {
+    RemoteCache cache(InfinispanTestEnvironment::host,
+                      InfinispanTestEnvironment::port);
     cache.connect();
 
     bool result = cache.ping();
@@ -56,9 +25,11 @@ TEST_F(PingIntegrationTest, BasicPing) {
     cache.disconnect();
 }
 
-// Test 2: PING with named cache
-TEST_F(PingIntegrationTest, PingWithNamedCache) {
-    RemoteCache cache(TEST_HOST, TEST_PORT, "myCache");
+// Test 2: PING with empty cache name (same as default)
+TEST(PingIntegrationTest, PingWithEmptyCacheName) {
+    RemoteCache cache(InfinispanTestEnvironment::host,
+                      InfinispanTestEnvironment::port,
+                      "");  // Empty cache name = default cache
     cache.connect();
 
     bool result = cache.ping();
@@ -69,8 +40,9 @@ TEST_F(PingIntegrationTest, PingWithNamedCache) {
 }
 
 // Test 3: Multiple PINGs on same connection
-TEST_F(PingIntegrationTest, MultiplePings) {
-    RemoteCache cache(TEST_HOST, TEST_PORT);
+TEST(PingIntegrationTest, MultiplePings) {
+    RemoteCache cache(InfinispanTestEnvironment::host,
+                      InfinispanTestEnvironment::port);
     cache.connect();
 
     for (int i = 0; i < 10; i++) {
@@ -82,8 +54,9 @@ TEST_F(PingIntegrationTest, MultiplePings) {
 }
 
 // Test 4: PING after disconnect should fail
-TEST_F(PingIntegrationTest, PingAfterDisconnect) {
-    RemoteCache cache(TEST_HOST, TEST_PORT);
+TEST(PingIntegrationTest, PingAfterDisconnect) {
+    RemoteCache cache(InfinispanTestEnvironment::host,
+                      InfinispanTestEnvironment::port);
     cache.connect();
     cache.disconnect();
 
@@ -92,9 +65,10 @@ TEST_F(PingIntegrationTest, PingAfterDisconnect) {
     }, std::runtime_error);
 }
 
-// Test 5: Connect, PING, disconnect, reconnect, PING
-TEST_F(PingIntegrationTest, ReconnectAndPing) {
-    RemoteCache cache(TEST_HOST, TEST_PORT);
+// Test 5: Reconnect and PING
+TEST(PingIntegrationTest, ReconnectAndPing) {
+    RemoteCache cache(InfinispanTestEnvironment::host,
+                      InfinispanTestEnvironment::port);
 
     // First connection
     cache.connect();
@@ -107,4 +81,14 @@ TEST_F(PingIntegrationTest, ReconnectAndPing) {
     bool result2 = cache.ping();
     EXPECT_TRUE(result2);
     cache.disconnect();
+}
+
+// Main function - registers the global environment
+int main(int argc, char** argv) {
+    ::testing::InitGoogleTest(&argc, argv);
+
+    // Add global environment (starts/stops server once for all tests)
+    ::testing::AddGlobalTestEnvironment(new InfinispanTestEnvironment());
+
+    return RUN_ALL_TESTS();
 }

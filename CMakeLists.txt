@@ -75,7 +75,17 @@ if(GTest_FOUND)
 
     add_test(NAME UnitTests COMMAND unit_tests)
 
-    # Integration tests (require running Infinispan server)
+    # Copy test scripts and configs to build directory
+    file(COPY ${CMAKE_SOURCE_DIR}/scripts
+         DESTINATION ${CMAKE_BINARY_DIR}
+         FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                          GROUP_READ GROUP_EXECUTE
+                          WORLD_READ WORLD_EXECUTE)
+
+    file(COPY ${CMAKE_SOURCE_DIR}/test-configs
+         DESTINATION ${CMAKE_BINARY_DIR})
+
+    # Integration tests (require Docker)
     add_executable(integration_tests
         tests/integration/PingIntegrationTest.cpp
     )
@@ -84,10 +94,16 @@ if(GTest_FOUND)
         PRIVATE
             hotrod-client
             GTest::gtest
-            GTest::gtest_main
+            # Note: NOT gtest_main - we provide our own main()
     )
 
     add_test(NAME IntegrationTests COMMAND integration_tests)
+
+    # Set working directory so scripts can be found
+    set_tests_properties(IntegrationTests PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        LABELS "integration;docker"
+    )
 
     message(STATUS "Google Test found - unit tests and integration tests enabled")
 else()
