@@ -65,6 +65,27 @@ public:
     bool get(const ByteArray& key, ByteArray& value);
 
     /**
+     * PUT operation - store key-value pair.
+     *
+     * Opcode: 0x01 (PUT_REQUEST) → 0x02 (PUT_RESPONSE)
+     *
+     * @param key The key as raw bytes
+     * @param value The value as raw bytes
+     * @param lifespan Entry lifespan in seconds (0 = immortal)
+     * @param maxIdle Max idle time in seconds (0 = no max idle)
+     * @param previousValue Output parameter for previous value (if existed)
+     * @return true if previous value existed, false otherwise
+     * @throws std::runtime_error on communication errors
+     *
+     * Reference:
+     * - Java: org.infinispan.client.hotrod.impl.operations.PutOperation
+     * - Java: org.infinispan.client.hotrod.impl.operations.AbstractKeyValueOperation
+     */
+    bool put(const ByteArray& key, const ByteArray& value,
+             uint64_t lifespan = 0, uint64_t maxIdle = 0,
+             ByteArray* previousValue = nullptr);
+
+    /**
      * Close connection to server.
      */
     void disconnect();

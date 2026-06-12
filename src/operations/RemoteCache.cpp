@@ -300,4 +300,102 @@ bool RemoteCache::get(const ByteArray& key, ByteArray& value) {
     return true;
 }
 
+bool RemoteCache::put(const ByteArray& key, const ByteArray& value,
+                      uint64_t lifespan, uint64_t maxIdle,
+                      ByteArray* previousValue) {
+    // Build PUT request header
+    RequestHeader header;
+    header.messageId = nextMessageId();
+    header.version = 0x28;  // Protocol 4.0
+    header.opcode = 0x01;   // PUT_REQUEST
+    header.cacheName = cacheName_;
+    header.flags = 0;
+    header.clientIntelligence = ClientIntelligence::BASIC;  // TODO: Use HASH_AWARE when topology is integrated
+    header.topologyId = 0;  // TODO: Track topology ID
+    header.keyMediaType = 0;
+    header.valueMediaType = 0;
+    // otherParams empty (count = 0)
+
+    // Encode request header + key + expiration + value
+    ByteArray request;
+    HeaderCodec::writeRequestHeader(request, header);
+
+    // Write key as lp_bytes (vInt length + bytes)
+    Codec::writeByteArray(request, key);
+
+    // Write expiration parameters (time_units byte + optional lifespan/maxIdle)
+    // Time units encoding (per Protocol 3.0+):
+    // - High nibble (bits 4-7): lifespan time unit
+    // - Low nibble (bits 0-3): maxIdle time unit
+    // - 0x00 = SECONDS, 0x07 = DEFAULT (infinite/server default)
+    // - If unit < 0x07, the duration (vLong) follows
+
+    uint8_t timeUnits = 0;
+    if (lifespan == 0) {
+        timeUnits |= (0x07 << 4);  // DEFAULT (infinite)
+    } else {
+        timeUnits |= (0x00 << 4);  // SECONDS
+    }
+    if (maxIdle == 0) {
+        timeUnits |= 0x07;  // DEFAULT (infinite)
+    } else {
+        timeUnits |= 0x00;  // SECONDS
+    }
+    request.push_back(timeUnits);
+
+    // Write lifespan if not default
+    if (lifespan > 0) {
+        Codec::writeVLong(request, lifespan);
+    }
+
+    // Write maxIdle if not default
+    if (maxIdle > 0) {
+        Codec::writeVLong(request, maxIdle);
+    }
+
+    // Write value as lp_bytes (vInt length + bytes)
+    Codec::writeByteArray(request, value);
+
+    // Send and receive response
+    ByteArray response = sendRequest(request);
+
+    // Parse response header
+    size_t offset = 0;
+    ResponseHeader respHeader = HeaderCodec::readResponseHeader(response, offset);
+
+    // Verify response
+    if (respHeader.opcode != 0x02) {  // PUT_RESPONSE
+        fprintf(stderr, "[ERROR] PUT response opcode: 0x%02X (expected 0x02), status: 0x%02X\n",
+                respHeader.opcode, respHeader.status);
+        throw std::runtime_error("Unexpected response opcode: " + std::to_string(respHeader.opcode));
+    }
+
+    if (respHeader.messageId != header.messageId) {
+        throw std::runtime_error("Message ID mismatch");
+    }
+
+    if (respHeader.status != 0x00) {  // NO_ERROR
+        throw std::runtime_error("PUT failed with status: " + std::to_string(respHeader.status));
+    }
+
+    // Check if previous value exists (status codes 0x03 or 0x04 in Protocol 4.0)
+    // For Protocol 4.0, PUT response includes metadata + value if previous existed
+    // But for simple PUT, we check the response body
+    // If there's data after the header, it's the previous value
+
+    // Read previous value from response body if present
+    // The response body structure depends on whether a previous value existed
+    // For now, assume no previous value (status 0x00 with no body)
+    // TODO: Handle previous value response in Protocol 4.0
+
+    if (previousValue) {
+        // Try to read previous value (may be empty)
+        // Check if there's more data in the socket
+        // For now, just clear it
+        previousValue->clear();
+    }
+
+    return false;  // No previous value (for now)
+}
+
 } // namespace hotrod

@@ -65,6 +65,7 @@ if(GTest_FOUND)
         tests/unit/ConsistentHashTest.cpp
         tests/unit/PingTest.cpp
         tests/unit/GetTest.cpp
+        tests/unit/PutTest.cpp
     )
 
     target_link_libraries(unit_tests
@@ -95,6 +96,10 @@ if(GTest_FOUND)
         tests/integration/GetIntegrationTest.cpp
     )
 
+    add_executable(put_integration_tests
+        tests/integration/PutIntegrationTest.cpp
+    )
+
     target_link_libraries(ping_integration_tests
         PRIVATE
             hotrod-client
@@ -109,8 +114,16 @@ if(GTest_FOUND)
             # Note: NOT gtest_main - we provide our own main()
     )
 
+    target_link_libraries(put_integration_tests
+        PRIVATE
+            hotrod-client
+            GTest::gtest
+            # Note: NOT gtest_main - we provide our own main()
+    )
+
     add_test(NAME PingIntegrationTests COMMAND ping_integration_tests)
     add_test(NAME GetIntegrationTests COMMAND get_integration_tests)
+    add_test(NAME PutIntegrationTests COMMAND put_integration_tests)
 
     # Set working directory so scripts can be found
     set_tests_properties(PingIntegrationTests PROPERTIES
@@ -118,6 +131,10 @@ if(GTest_FOUND)
         LABELS "integration;docker"
     )
     set_tests_properties(GetIntegrationTests PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        LABELS "integration;docker"
+    )
+    set_tests_properties(PutIntegrationTests PROPERTIES
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         LABELS "integration;docker"
     )

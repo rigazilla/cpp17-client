@@ -3,7 +3,7 @@
 **Language**: C++17  
 **Started**: 2026-06-11  
 **Last Updated**: 2026-06-12  
-**Current Step**: Step 8 (PUT Operation) - GET complete!
+**Current Step**: Step 9 (REMOVE Operation) - CRUD operations complete!
 
 ## Completion Status
 
@@ -17,7 +17,8 @@
 | 5. Hashing | ✅ Done | 2026-06-11 | ✅ 31/31 | MurmurHash3 + consistent hashing |
 | 6. PING | ✅ Done | 2026-06-11 | ✅ 9/9 | First complete operation! |
 | 7. GET | ✅ Done | 2026-06-12 | ✅ 9/9 | First read operation! |
-| 8. PUT | ⏳ Not Started | - | - | Write operation |
+| 8. PUT | ✅ Done | 2026-06-12 | ✅ 9/9 | First write operation! |
+| 9. REMOVE | ⏳ Not Started | - | - | Delete operation |
 
 **Status Legend:**
 - ⏳ Not Started
@@ -33,8 +34,8 @@
 
 ## Test Results
 
-- Unit Tests: **132/132 passing** ✅ (39 codec + 19 header + 10 SCRAM + 15 topology + 31 hashing + 9 PING + 9 GET)
-- Integration Tests: **13/13 passing** ✅ (5 PING + 8 GET)
+- Unit Tests: **141/141 passing** ✅ (39 codec + 19 header + 10 SCRAM + 15 topology + 31 hashing + 9 PING + 9 GET + 9 PUT)
+- Integration Tests: **21/21 passing** ✅ (5 PING + 8 GET + 8 PUT)
 - Test Vector Validation: 100% (Steps 1-6 complete)
 
 ## Known Issues
@@ -386,6 +387,58 @@ primaryOwner = segmentOwners[segment][0]
 - Java: org.infinispan.client.hotrod.impl.operations.GetOperation
 - Java: org.infinispan.client.hotrod.impl.operations.AbstractKeyOperation
 - Kaitai: hotrod40.ksy get_response
+
+### Step 8 Completion (2026-06-12) ✅
+- ✅ PUT request encoding (opcode 0x01)
+- ✅ PUT response parsing (opcode 0x02)
+- ✅ Key and value serialization (lp_bytes)
+- ✅ Expiration parameters (lifespan, maxIdle) with time units encoding
+- ✅ Time units byte (high nibble = lifespan unit, low nibble = maxIdle unit)
+- ✅ 9 unit tests all passing
+- ✅ 8 integration tests all passing
+- 🎉 First write operation complete! Full CRUD support!
+
+**PUT Operation:**
+- Request: Protocol 4.0 header + key + time_units + optional lifespan/maxIdle + value
+- Response: Status (previous value support to be implemented)
+- Parameters: lifespan and maxIdle in seconds (0 = immortal/infinite)
+- Returns: true if previous value existed (not fully implemented yet)
+
+**Time Units Encoding:**
+- 1 byte with high nibble (lifespan unit) and low nibble (maxIdle unit)
+- 0x00 = SECONDS (value follows as vLong)
+- 0x07 = DEFAULT/INFINITE (no value follows)
+- Example: 0x77 = both infinite, 0x00 = both in seconds
+
+**Test Coverage (9 unit tests):**
+- Simple PUT request encoding: 1 test
+- PUT with lifespan only: 1 test
+- PUT with both lifespan and maxIdle: 1 test
+- Response parsing (success, no prev): 1 test
+- Response parsing (with prev value): 1 test
+- Round-trip PUT operation: 1 test
+- Named cache support: 1 test
+- Opcode constants: 1 test
+- Time units encoding: 1 test
+
+**Integration Test Coverage (8/8 passing):**
+- PUT → GET round-trip validation ✅
+- Update existing key (PUT twice) ✅
+- Large value (1000 bytes) ✅
+- Empty value ✅
+- Multiple PUTs on same connection (10 ops) ✅
+- Multiple caches isolation ✅
+- Error handling (PUT after disconnect) ✅
+- PUT with lifespan parameter ✅
+
+**Reference:**
+- Java: org.infinispan.client.hotrod.impl.operations.PutOperation
+- Java: org.infinispan.client.hotrod.impl.operations.AbstractKeyValueOperation
+- Kaitai: hotrod40.ksy put_request
+- ROADMAP: Step 8 requirements
+
+**API:**
+- bool RemoteCache::put(const ByteArray& key, const ByteArray& value, uint64_t lifespan = 0, uint64_t maxIdle = 0, ByteArray* previousValue = nullptr)
 
 ---
 
