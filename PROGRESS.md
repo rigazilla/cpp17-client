@@ -34,7 +34,7 @@
 ## Test Results
 
 - Unit Tests: **132/132 passing** ✅ (39 codec + 19 header + 10 SCRAM + 15 topology + 31 hashing + 9 PING + 9 GET)
-- Integration Tests: **6/13 passing** (5 PING + 1 GET, some GET tests need tuning)
+- Integration Tests: **13/13 passing** ✅ (5 PING + 8 GET)
 - Test Vector Validation: 100% (Steps 1-6 complete)
 
 ## Known Issues
@@ -366,12 +366,21 @@ primaryOwner = segmentOwners[segment][0]
 - Named cache: 1 test
 - Opcode constants: 1 test
 
-**Integration Test Coverage:**
+**Integration Test Coverage (8/8 passing):**
 - Cross-client validation: REST API PUT → Hot Rod GET ✅
 - Key not found handling ✅
 - Multiple caches isolation ✅
 - Connection reuse (multiple GETs) ✅
+- Large key (200 bytes) ✅
+- Large value (1000 bytes) ✅
+- Empty value ✅
 - Error handling (GET after disconnect) ✅
+
+**Critical Bug Fix:**
+- Fixed vInt decoding for values >= 128 bytes
+- Was incorrectly shifting previous value instead of new byte
+- Now uses correct algorithm: first byte as base, OR subsequent bytes shifted by 7*n
+- Enables correct handling of large keys/values with multi-byte vInt lengths
 
 **Reference:**
 - Java: org.infinispan.client.hotrod.impl.operations.GetOperation

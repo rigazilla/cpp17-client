@@ -40,18 +40,6 @@ bool putViaREST(const std::string& cacheName, const std::string& key, const std:
     return result == 0;
 }
 
-// Helper: DELETE via REST API
-bool deleteViaREST(const std::string& cacheName, const std::string& key) {
-    std::string port = std::to_string(InfinispanTestEnvironment::port);
-    std::string host = InfinispanTestEnvironment::host;
-
-    std::string deleteCmd = "timeout 5 curl -s -X DELETE \"http://" + host + ":" + port +
-                           "/rest/v2/caches/" + cacheName + "/" + key +
-                           "\" >/dev/null 2>&1 || true";
-    system(deleteCmd.c_str());
-    return true;  // Don't fail test if cleanup fails
-}
-
 } // anonymous namespace
 
 // Test 1: GET existing key (PUT via REST)
@@ -77,12 +65,14 @@ TEST(GetIntegrationTest, GetExistingKey) {
 
     cache.disconnect();
 
-    // Cleanup
-    deleteViaREST("testcache", "key1");
+    // Note: Cleanup skipped - let cache TTL handle it
 }
 
 // Test 2: GET non-existent key
 TEST(GetIntegrationTest, GetNonExistentKey) {
+    // Setup: Create cache with a dummy key (cache must exist)
+    ASSERT_TRUE(putViaREST("testcache", "dummy", "value"));
+
     RemoteCache cache(InfinispanTestEnvironment::host,
                       InfinispanTestEnvironment::port,
                       "testcache");
@@ -96,6 +86,8 @@ TEST(GetIntegrationTest, GetNonExistentKey) {
     EXPECT_EQ(0, value.size());
 
     cache.disconnect();
+
+    // Note: Cleanup skipped - let cache TTL handle it
 }
 
 // Test 3: GET with different cache
@@ -137,9 +129,7 @@ TEST(GetIntegrationTest, GetFromDifferentCache) {
 
     cache2.disconnect();
 
-    // Cleanup
-    deleteViaREST("cache1", "sharedkey");
-    deleteViaREST("cache2", "sharedkey");
+    // Note: Cleanup skipped - let cache TTL handle it
 }
 
 // Test 4: Multiple GETs on same connection
@@ -174,10 +164,7 @@ TEST(GetIntegrationTest, MultipleGetsOnSameConnection) {
 
     cache.disconnect();
 
-    // Cleanup
-    deleteViaREST("testcache", "multi1");
-    deleteViaREST("testcache", "multi2");
-    deleteViaREST("testcache", "multi3");
+    // Note: Cleanup skipped - let cache TTL handle it
 }
 
 // Test 5: GET with large key
@@ -202,13 +189,12 @@ TEST(GetIntegrationTest, GetWithLargeKey) {
 
     cache.disconnect();
 
-    // Cleanup
-    deleteViaREST("testcache", largeKeyStr);
+    // Note: Cleanup skipped - let cache TTL handle it
 }
 
 // Test 6: GET with large value
 TEST(GetIntegrationTest, GetWithLargeValue) {
-    // Create a large value (>127 bytes)
+    // Create a large value (1000 bytes)
     std::string largeValueStr(1000, 'Y');
 
     ASSERT_TRUE(putViaREST("testcache", "bigval", largeValueStr));
@@ -229,8 +215,7 @@ TEST(GetIntegrationTest, GetWithLargeValue) {
 
     cache.disconnect();
 
-    // Cleanup
-    deleteViaREST("testcache", "bigval");
+    // Note: Cleanup skipped - let cache TTL handle it
 }
 
 // Test 7: GET with empty value
@@ -252,8 +237,7 @@ TEST(GetIntegrationTest, GetWithEmptyValue) {
 
     cache.disconnect();
 
-    // Cleanup
-    deleteViaREST("testcache", "emptyval");
+    // Note: Cleanup skipped - let cache TTL handle it
 }
 
 // Test 8: GET after disconnect should fail

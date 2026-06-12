@@ -280,12 +280,14 @@ bool RemoteCache::get(const ByteArray& key, ByteArray& value) {
     // The response body is NOT in the response ByteArray - we only read the header!
     // Need to read the value directly from the socket.
 
-    // Read vInt length
-    VInt valueLength = 0;
-    while (true) {
-        ByteArray b = connection_->receive(1);
-        valueLength = (valueLength << 7) | (b[0] & 0x7F);
-        if ((b[0] & 0x80) == 0) break;
+    // Read vInt length (same algorithm as Codec::readVInt but from socket)
+    ByteArray firstByte = connection_->receive(1);
+    VInt valueLength = firstByte[0] & 0x7F;
+
+    for (int shift = 7; (firstByte[0] & 0x80) != 0; shift += 7) {
+        ByteArray nextByte = connection_->receive(1);
+        valueLength |= static_cast<VInt>(nextByte[0] & 0x7F) << shift;
+        firstByte[0] = nextByte[0];  // Update for continuation check
     }
 
     // Read value bytes
