@@ -398,4 +398,100 @@ bool RemoteCache::put(const ByteArray& key, const ByteArray& value,
     return false;  // No previous value (for now)
 }
 
+bool RemoteCache::remove(const ByteArray& key, ByteArray* previousValue) {
+    // Build REMOVE request header
+    RequestHeader header;
+    header.messageId = nextMessageId();
+    header.version = 0x28;  // Protocol 4.0
+    header.opcode = 0x0B;   // REMOVE_REQUEST
+    header.cacheName = cacheName_;
+    header.flags = 0;
+    header.clientIntelligence = ClientIntelligence::BASIC;  // TODO: Use HASH_AWARE when topology is integrated
+    header.topologyId = 0;  // TODO: Track topology ID
+    header.keyMediaType = 0;
+    header.valueMediaType = 0;
+    // otherParams empty (count = 0)
+
+    // Encode request header + key
+    ByteArray request;
+    HeaderCodec::writeRequestHeader(request, header);
+
+    // Write key as lp_bytes (vInt length + bytes)
+    Codec::writeByteArray(request, key);
+
+    // Send and receive response
+    ByteArray response = sendRequest(request);
+
+    // Parse response header
+    size_t offset = 0;
+    ResponseHeader respHeader = HeaderCodec::readResponseHeader(response, offset);
+
+    // Verify response
+    if (respHeader.opcode != 0x0C) {  // REMOVE_RESPONSE
+        fprintf(stderr, "[ERROR] REMOVE response opcode: 0x%02X (expected 0x0C), status: 0x%02X\n",
+                respHeader.opcode, respHeader.status);
+        throw std::runtime_error("Unexpected response opcode: " + std::to_string(respHeader.opcode));
+    }
+
+    if (respHeader.messageId != header.messageId) {
+        throw std::runtime_error("Message ID mismatch");
+    }
+
+    // Status codes:
+    // 0x00 = SUCCESS (key existed, no previous value in response)
+    // 0x01 = NOT_EXECUTED (operation not executed)
+    // 0x02 = KEY_DOES_NOT_EXIST (key didn't exist)
+    // 0x03 = SUCCESS_WITH_PREVIOUS (key existed, previous value in response)
+    // 0x04 = NOT_EXECUTED_WITH_PREVIOUS
+
+    if (respHeader.status == 0x01 || respHeader.status == 0x02) {
+        // Key didn't exist
+        if (previousValue) {
+            previousValue->clear();
+        }
+        return false;
+    }
+
+    // Check if previous value is included in response
+    bool hasPreviousValue = (respHeader.status == 0x03 || respHeader.status == 0x04);
+
+    if (respHeader.status != 0x00 && respHeader.status != 0x03 && respHeader.status != 0x04) {
+        throw std::runtime_error("REMOVE failed with status: " + std::to_string(respHeader.status));
+    }
+
+    // Read previous value from response body if status indicates it's present
+    if (hasPreviousValue) {
+        // Read vInt length (same algorithm as GET)
+        ByteArray firstByte = connection_->receive(1);
+        VInt valueLength = firstByte[0] & 0x7F;
+
+        for (int shift = 7; (firstByte[0] & 0x80) != 0; shift += 7) {
+            ByteArray nextByte = connection_->receive(1);
+            valueLength |= static_cast<VInt>(nextByte[0] & 0x7F) << shift;
+            firstByte[0] = nextByte[0];  // Update for continuation check
+        }
+
+        // Read previous value bytes
+        if (previousValue) {
+            if (valueLength > 0) {
+                *previousValue = connection_->receive(valueLength);
+            } else {
+                previousValue->clear();
+            }
+        } else {
+            // Discard the value if caller doesn't want it
+            if (valueLength > 0) {
+                connection_->receive(valueLength);
+            }
+        }
+    } else {
+        // No previous value in response (status 0x00)
+        if (previousValue) {
+            previousValue->clear();
+        }
+    }
+
+    return true;  // Key existed and was removed
+}
+
 } // namespace hotrod

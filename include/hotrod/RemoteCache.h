@@ -86,6 +86,21 @@ public:
              ByteArray* previousValue = nullptr);
 
     /**
+     * REMOVE operation - delete key-value pair.
+     *
+     * Opcode: 0x0B (REMOVE_REQUEST) → 0x0C (REMOVE_RESPONSE)
+     *
+     * @param key The key as raw bytes
+     * @param previousValue Output parameter for previous value (if existed)
+     * @return true if key existed and was removed, false if key didn't exist
+     * @throws std::runtime_error on communication errors
+     *
+     * Reference:
+     * - Java: org.infinispan.client.hotrod.impl.operations.RemoveOperation
+     */
+    bool remove(const ByteArray& key, ByteArray* previousValue = nullptr);
+
+    /**
      * Close connection to server.
      */
     void disconnect();

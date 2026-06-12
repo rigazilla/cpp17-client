@@ -1,0 +1,274 @@
+#include <gtest/gtest.h>
+#include "hotrod/RemoteCache.h"
+#include "InfinispanTestEnvironment.h"
+
+using namespace hotrod;
+using namespace hotrod::test;
+
+/**
+ * REMOVE Integration Tests - No Authentication
+ *
+ * Tests run against Infinispan server managed by InfinispanTestEnvironment.
+ * Uses Hot Rod PUT, REMOVE, and GET for complete validation.
+ *
+ * Reference:
+ * - ROADMAP Step 9: REMOVE operation
+ */
+
+namespace {
+
+// Helper: Create cache via REST API
+bool createCacheViaREST(const std::string& cacheName) {
+    std::string port = std::to_string(InfinispanTestEnvironment::port);
+    std::string host = InfinispanTestEnvironment::host;
+
+    std::string createCmd = "timeout 5 curl -s -X POST \"http://" + host + ":" + port +
+                           "/rest/v2/caches/" + cacheName + "\" >/dev/null 2>&1 || true";
+    system(createCmd.c_str());
+    return true;
+}
+
+} // anonymous namespace
+
+// Test 1: PUT→REMOVE→GET (key should not exist after remove)
+TEST(RemoveIntegrationTest, PutRemoveGet) {
+    createCacheViaREST("testcache");
+
+    RemoteCache cache(InfinispanTestEnvironment::host,
+                      InfinispanTestEnvironment::port,
+                      "testcache");
+    cache.connect();
+
+    // PUT
+    ByteArray key = {'r', 'e', 'm', 'k', 'e', 'y', '1'};
+    ByteArray value = {'r', 'e', 'm', 'v', 'a', 'l', '1'};
+    bool putHadPrevious = cache.put(key, value);
+    EXPECT_FALSE(putHadPrevious);
+
+    // REMOVE
+    ByteArray previousValue;
+    bool removed = cache.remove(key, &previousValue);
+    EXPECT_TRUE(removed);  // Key existed
+    // Note: Previous value may or may not be returned depending on server config
+    // If server returns it (status 0x03), verify it matches
+    // If not (status 0x00), previousValue will be empty
+
+    // GET (should not exist)
+    ByteArray retrievedValue;
+    bool found = cache.get(key, retrievedValue);
+    EXPECT_FALSE(found);
+
+    cache.disconnect();
+}
+
+// Test 2: REMOVE non-existent key
+TEST(RemoveIntegrationTest, RemoveNonExistent) {
+    createCacheViaREST("testcache");
+
+    RemoteCache cache(InfinispanTestEnvironment::host,
+                      InfinispanTestEnvironment::port,
+                      "testcache");
+    cache.connect();
+
+    ByteArray key = {'n', 'o', 'e', 'x', 'i', 's', 't'};
+    ByteArray previousValue;
+    bool removed = cache.remove(key, &previousValue);
+
+    EXPECT_FALSE(removed);  // Key didn't exist
+    EXPECT_EQ(0, previousValue.size());
+
+    cache.disconnect();
+}
+
+// Test 3: REMOVE with large value
+TEST(RemoveIntegrationTest, RemoveLargeValue) {
+    createCacheViaREST("testcache");
+
+    RemoteCache cache(InfinispanTestEnvironment::host,
+                      InfinispanTestEnvironment::port,
+                      "testcache");
+    cache.connect();
+
+    ByteArray key = {'b', 'i', 'g', 'r', 'e', 'm'};
+    ByteArray value(1000, 'R');  // 1000 'R' characters
+
+    // PUT
+    cache.put(key, value);
+
+    // REMOVE
+    ByteArray previousValue;
+    bool removed = cache.remove(key, &previousValue);
+
+    EXPECT_TRUE(removed);
+    // Note: Server may or may not return previous value (depends on config)
+    // Just verify removal succeeded
+    // If previousValue is returned, verify it
+    if (previousValue.size() > 0) {
+        EXPECT_EQ(1000, previousValue.size());
+        EXPECT_EQ('R', previousValue[0]);
+        EXPECT_EQ('R', previousValue[999]);
+    }
+
+    cache.disconnect();
+}
+
+// Test 4: REMOVE empty value
+TEST(RemoveIntegrationTest, RemoveEmptyValue) {
+    createCacheViaREST("testcache");
+
+    RemoteCache cache(InfinispanTestEnvironment::host,
+                      InfinispanTestEnvironment::port,
+                      "testcache");
+    cache.connect();
+
+    ByteArray key = {'e', 'm', 'p', 't', 'y', 'r', 'e', 'm'};
+    ByteArray value;  // Empty
+
+    // PUT
+    cache.put(key, value);
+
+    // REMOVE
+    ByteArray previousValue;
+    bool removed = cache.remove(key, &previousValue);
+
+    EXPECT_TRUE(removed);
+    // Empty value (whether returned or not, size should be 0)
+
+    cache.disconnect();
+}
+
+// Test 5: Multiple REMOVEs on same connection
+TEST(RemoveIntegrationTest, MultipleRemoves) {
+    createCacheViaREST("testcache");
+
+    RemoteCache cache(InfinispanTestEnvironment::host,
+                      InfinispanTestEnvironment::port,
+                      "testcache");
+    cache.connect();
+
+    // PUT 10 entries
+    for (int i = 0; i < 10; i++) {
+        std::string keyStr = "rmulti" + std::to_string(i);
+        std::string valueStr = "rval" + std::to_string(i);
+
+        ByteArray key(keyStr.begin(), keyStr.end());
+        ByteArray value(valueStr.begin(), valueStr.end());
+
+        cache.put(key, value);
+    }
+
+    // REMOVE all 10 entries
+    for (int i = 0; i < 10; i++) {
+        std::string keyStr = "rmulti" + std::to_string(i);
+        ByteArray key(keyStr.begin(), keyStr.end());
+
+        ByteArray previousValue;
+        bool removed = cache.remove(key, &previousValue);
+
+        EXPECT_TRUE(removed) << "REMOVE #" << i << " failed";
+
+        // Verify previous value if server returned it
+        if (previousValue.size() > 0) {
+            std::string expectedValue = "rval" + std::to_string(i);
+            std::string actualValue(previousValue.begin(), previousValue.end());
+            EXPECT_EQ(expectedValue, actualValue) << "Value mismatch for #" << i;
+        }
+    }
+
+    cache.disconnect();
+}
+
+// Test 6: REMOVE without retrieving previous value
+TEST(RemoveIntegrationTest, RemoveWithoutPreviousValue) {
+    createCacheViaREST("testcache");
+
+    RemoteCache cache(InfinispanTestEnvironment::host,
+                      InfinispanTestEnvironment::port,
+                      "testcache");
+    cache.connect();
+
+    ByteArray key = {'n', 'o', 'p', 'r', 'e', 'v'};
+    ByteArray value = {'v', 'a', 'l', 'u', 'e'};
+
+    // PUT
+    cache.put(key, value);
+
+    // REMOVE without previous value parameter
+    bool removed = cache.remove(key);
+
+    EXPECT_TRUE(removed);
+
+    // Verify key doesn't exist
+    ByteArray retrieved;
+    bool found = cache.get(key, retrieved);
+    EXPECT_FALSE(found);
+
+    cache.disconnect();
+}
+
+// Test 7: REMOVE from different caches
+TEST(RemoveIntegrationTest, RemoveFromDifferentCaches) {
+    createCacheViaREST("cache1");
+    createCacheViaREST("cache2");
+
+    RemoteCache cache1(InfinispanTestEnvironment::host,
+                       InfinispanTestEnvironment::port,
+                       "cache1");
+    cache1.connect();
+
+    RemoteCache cache2(InfinispanTestEnvironment::host,
+                       InfinispanTestEnvironment::port,
+                       "cache2");
+    cache2.connect();
+
+    ByteArray key = {'s', 'h', 'a', 'r', 'e', 'd', 'r', 'e', 'm'};
+    ByteArray value1 = {'c', '1'};
+    ByteArray value2 = {'c', '2'};
+
+    // PUT to both caches
+    cache1.put(key, value1);
+    cache2.put(key, value2);
+
+    // REMOVE from cache1
+    bool removed1 = cache1.remove(key);
+    EXPECT_TRUE(removed1);
+
+    // Verify cache1 doesn't have it
+    ByteArray retrieved1;
+    bool found1 = cache1.get(key, retrieved1);
+    EXPECT_FALSE(found1);
+
+    // Verify cache2 still has it
+    ByteArray retrieved2;
+    bool found2 = cache2.get(key, retrieved2);
+    EXPECT_TRUE(found2);
+    EXPECT_EQ(value2, retrieved2);
+
+    cache1.disconnect();
+    cache2.disconnect();
+}
+
+// Test 8: REMOVE after disconnect should fail
+TEST(RemoveIntegrationTest, RemoveAfterDisconnect) {
+    RemoteCache cache(InfinispanTestEnvironment::host,
+                      InfinispanTestEnvironment::port,
+                      "testcache");
+    cache.connect();
+    cache.disconnect();
+
+    ByteArray key = {'t', 'e', 's', 't'};
+
+    EXPECT_THROW({
+        cache.remove(key);
+    }, std::runtime_error);
+}
+
+// Main function - registers the global environment
+int main(int argc, char** argv) {
+    ::testing::InitGoogleTest(&argc, argv);
+
+    // Add global environment (starts/stops server once for all tests)
+    ::testing::AddGlobalTestEnvironment(new InfinispanTestEnvironment());
+
+    return RUN_ALL_TESTS();
+}

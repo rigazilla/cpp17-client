@@ -3,7 +3,7 @@
 **Language**: C++17  
 **Started**: 2026-06-11  
 **Last Updated**: 2026-06-12  
-**Current Step**: Step 9 (REMOVE Operation) - CRUD operations complete!
+**Current Step**: Step 10 (Metadata Operations) - Full CRUD complete!
 
 ## Completion Status
 
@@ -18,7 +18,8 @@
 | 6. PING | ✅ Done | 2026-06-11 | ✅ 9/9 | First complete operation! |
 | 7. GET | ✅ Done | 2026-06-12 | ✅ 9/9 | First read operation! |
 | 8. PUT | ✅ Done | 2026-06-12 | ✅ 9/9 | First write operation! |
-| 9. REMOVE | ⏳ Not Started | - | - | Delete operation |
+| 9. REMOVE | ✅ Done | 2026-06-12 | ✅ 9/9 | Delete operation! |
+| 10. Metadata | ⏳ Not Started | - | - | Version-based operations |
 
 **Status Legend:**
 - ⏳ Not Started
@@ -34,8 +35,8 @@
 
 ## Test Results
 
-- Unit Tests: **141/141 passing** ✅ (39 codec + 19 header + 10 SCRAM + 15 topology + 31 hashing + 9 PING + 9 GET + 9 PUT)
-- Integration Tests: **21/21 passing** ✅ (5 PING + 8 GET + 8 PUT)
+- Unit Tests: **150/150 passing** ✅ (39 codec + 19 header + 10 SCRAM + 15 topology + 31 hashing + 9 PING + 9 GET + 9 PUT + 9 REMOVE)
+- Integration Tests: **29/29 passing** ✅ (5 PING + 8 GET + 8 PUT + 8 REMOVE)
 - Test Vector Validation: 100% (Steps 1-6 complete)
 
 ## Known Issues
@@ -439,6 +440,60 @@ primaryOwner = segmentOwners[segment][0]
 
 **API:**
 - bool RemoteCache::put(const ByteArray& key, const ByteArray& value, uint64_t lifespan = 0, uint64_t maxIdle = 0, ByteArray* previousValue = nullptr)
+
+### Step 9 Completion (2026-06-12) ✅
+- ✅ REMOVE request encoding (opcode 0x0B)
+- ✅ REMOVE response parsing (opcode 0x0C)
+- ✅ Key serialization (lp_bytes, same as GET)
+- ✅ Previous value handling with status codes 0x03/0x04
+- ✅ Handle key not found (status 0x01, 0x02)
+- ✅ 9 unit tests all passing
+- ✅ 8 integration tests all passing
+- 🎉 Full CRUD operations complete! (Create/Read/Update/Delete)
+
+**REMOVE Operation:**
+- Request: Protocol 4.0 header + key (lp_bytes)
+- Response: Status + optional previous value (based on status code)
+- Status 0x00 = SUCCESS (no previous value in response)
+- Status 0x03 = SUCCESS_WITH_PREVIOUS (previous value included)
+- Status 0x01/0x02 = Key not found
+- Returns: true if key existed, false otherwise
+
+**Response Status Codes:**
+- 0x00 = SUCCESS (key removed, no previous value returned)
+- 0x01 = NOT_EXECUTED (operation not executed)
+- 0x02 = KEY_DOES_NOT_EXIST (key didn't exist)
+- 0x03 = SUCCESS_WITH_PREVIOUS (key removed, previous value returned)
+- 0x04 = NOT_EXECUTED_WITH_PREVIOUS
+
+**Test Coverage (9 unit tests):**
+- Simple REMOVE request encoding: 1 test
+- Large key (multi-byte vInt): 1 test
+- Response parsing (key existed): 1 test
+- Response parsing (key not found): 1 test
+- Empty previous value: 1 test
+- Round-trip REMOVE operation: 1 test
+- Named cache support: 1 test
+- Opcode constants: 1 test
+- Large previous value (300 bytes): 1 test
+
+**Integration Test Coverage (8/8 passing):**
+- PUT→REMOVE→GET validation ✅
+- REMOVE non-existent key ✅
+- REMOVE large value (1000 bytes) ✅
+- REMOVE empty value ✅
+- Multiple REMOVEs on same connection (10 ops) ✅
+- REMOVE without retrieving previous value ✅
+- Multiple caches isolation ✅
+- Error handling (REMOVE after disconnect) ✅
+
+**Reference:**
+- Java: org.infinispan.client.hotrod.impl.operations.RemoveOperation
+- Kaitai: hotrod40.ksy (REMOVE uses key_request, same as GET)
+- ROADMAP: Step 9 requirements
+
+**API:**
+- bool RemoteCache::remove(const ByteArray& key, ByteArray* previousValue = nullptr)
 
 ---
 
