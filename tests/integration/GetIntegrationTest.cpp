@@ -12,40 +12,44 @@ using namespace hotrod::test;
  * GET Integration Tests - No Authentication
  *
  * Tests run against Infinispan server managed by InfinispanTestEnvironment.
- * Uses REST API to PUT data, then Hot Rod client to GET it.
+ * Uses Hot Rod PUT to store data, then Hot Rod GET to retrieve it.
  *
  * Reference:
- * - ROADMAP Step 7: Cross-client validation (Java PUT → Your GET)
- * - Using REST API as the "other client" for cross-validation
+ * - ROADMAP Step 7: Cross-client validation
+ * - Pure Hot Rod protocol testing (PUT→GET round-trip)
  */
 
 namespace {
 
-// Helper: PUT via REST API
-bool putViaREST(const std::string& cacheName, const std::string& key, const std::string& value) {
-    std::string port = std::to_string(InfinispanTestEnvironment::port);
-    std::string host = InfinispanTestEnvironment::host;
+// Helper: Create cache via CLI (same approach as Go client)
+void createCacheViaCLI(const std::string& cacheName) {
+    std::string cmd = "docker exec " + InfinispanTestEnvironment::containerID +
+                     " bash -c \"echo 'create cache --template=org.infinispan.DIST_SYNC " + cacheName +
+                     "' | /opt/infinispan/bin/cli.sh -c http://admin:password@localhost:11222\" >/dev/null 2>&1";
+    system(cmd.c_str());
+}
 
-    // Create cache first
-    std::string createCmd = "curl -s -X POST \"http://" + host + ":" + port +
-                           "/rest/v2/caches/" + cacheName + "\" >/dev/null 2>&1 || true";
-    system(createCmd.c_str());
+// Helper: PUT via Hot Rod protocol
+void putViaHotRod(const std::string& cacheName, const std::string& key, const std::string& value) {
+    RemoteCache cache(InfinispanTestEnvironment::host,
+                     InfinispanTestEnvironment::port,
+                     cacheName);
+    cache.connect();
 
-    // PUT key-value with timeout
-    std::string putCmd = "timeout 5 curl -s -X POST \"http://" + host + ":" + port +
-                        "/rest/v2/caches/" + cacheName + "/" + key +
-                        "\" -H \"Content-Type: text/plain\" -d \"" + value +
-                        "\" >/dev/null 2>&1";
-    int result = system(putCmd.c_str());
-    return result == 0;
+    ByteArray keyBytes(key.begin(), key.end());
+    ByteArray valueBytes(value.begin(), value.end());
+    cache.put(keyBytes, valueBytes);
+
+    cache.disconnect();
 }
 
 } // anonymous namespace
 
 // Test 1: GET existing key (PUT via REST)
 TEST(GetIntegrationTest, GetExistingKey) {
-    // Setup: PUT key via REST
-    ASSERT_TRUE(putViaREST("testcache", "key1", "value1"));
+    // Setup: Create cache and PUT key
+    createCacheViaCLI("testcache");
+    putViaHotRod("testcache", "key1", "value1");
 
     // Test: GET key via Hot Rod
     RemoteCache cache(InfinispanTestEnvironment::host,
@@ -70,8 +74,8 @@ TEST(GetIntegrationTest, GetExistingKey) {
 
 // Test 2: GET non-existent key
 TEST(GetIntegrationTest, GetNonExistentKey) {
-    // Setup: Create cache with a dummy key (cache must exist)
-    ASSERT_TRUE(putViaREST("testcache", "dummy", "value"));
+    // Setup: Create cache (no need for dummy key)
+    createCacheViaCLI("testcache");
 
     RemoteCache cache(InfinispanTestEnvironment::host,
                       InfinispanTestEnvironment::port,
@@ -92,11 +96,15 @@ TEST(GetIntegrationTest, GetNonExistentKey) {
 
 // Test 3: GET with different cache
 TEST(GetIntegrationTest, GetFromDifferentCache) {
+    // Create both caches
+    createCacheViaCLI("cache1");
+    createCacheViaCLI("cache2");
+
     // PUT to cache1
-    ASSERT_TRUE(putViaREST("cache1", "sharedkey", "fromcache1"));
+    putViaHotRod("cache1", "sharedkey", "fromcache1");
 
     // PUT to cache2 with same key
-    ASSERT_TRUE(putViaREST("cache2", "sharedkey", "fromcache2"));
+    putViaHotRod("cache2", "sharedkey", "fromcache2");
 
     // GET from cache1
     RemoteCache cache1(InfinispanTestEnvironment::host,
@@ -134,10 +142,11 @@ TEST(GetIntegrationTest, GetFromDifferentCache) {
 
 // Test 4: Multiple GETs on same connection
 TEST(GetIntegrationTest, MultipleGetsOnSameConnection) {
-    // Setup: PUT multiple keys
-    ASSERT_TRUE(putViaREST("testcache", "multi1", "val1"));
-    ASSERT_TRUE(putViaREST("testcache", "multi2", "val2"));
-    ASSERT_TRUE(putViaREST("testcache", "multi3", "val3"));
+    // Setup: Create cache and PUT multiple keys
+    createCacheViaCLI("testcache");
+    putViaHotRod("testcache", "multi1", "val1");
+    putViaHotRod("testcache", "multi2", "val2");
+    putViaHotRod("testcache", "multi3", "val3");
 
     RemoteCache cache(InfinispanTestEnvironment::host,
                       InfinispanTestEnvironment::port,
@@ -173,8 +182,9 @@ TEST(GetIntegrationTest, GetWithLargeKey) {
     std::string largeKeyStr(200, 'X');
     ByteArray largeKey(largeKeyStr.begin(), largeKeyStr.end());
 
-    // Setup: PUT via REST (URL-encode if needed, but for X's it's fine)
-    ASSERT_TRUE(putViaREST("testcache", largeKeyStr, "largeKeyValue"));
+    // Setup: Create cache and PUT
+    createCacheViaCLI("testcache");
+    putViaHotRod("testcache", largeKeyStr, "largeKeyValue");
 
     RemoteCache cache(InfinispanTestEnvironment::host,
                       InfinispanTestEnvironment::port,
@@ -197,7 +207,8 @@ TEST(GetIntegrationTest, GetWithLargeValue) {
     // Create a large value (1000 bytes)
     std::string largeValueStr(1000, 'Y');
 
-    ASSERT_TRUE(putViaREST("testcache", "bigval", largeValueStr));
+    createCacheViaCLI("testcache");
+    putViaHotRod("testcache", "bigval", largeValueStr);
 
     RemoteCache cache(InfinispanTestEnvironment::host,
                       InfinispanTestEnvironment::port,
@@ -220,8 +231,9 @@ TEST(GetIntegrationTest, GetWithLargeValue) {
 
 // Test 7: GET with empty value
 TEST(GetIntegrationTest, GetWithEmptyValue) {
-    // PUT empty value
-    ASSERT_TRUE(putViaREST("testcache", "emptyval", ""));
+    // Create cache and PUT empty value
+    createCacheViaCLI("testcache");
+    putViaHotRod("testcache", "emptyval", "");
 
     RemoteCache cache(InfinispanTestEnvironment::host,
                       InfinispanTestEnvironment::port,

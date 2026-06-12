@@ -41,8 +41,13 @@ public:
 
         std::string line;
         while (std::getline(env, line)) {
+            // Skip non-export lines
+            if (line.find("export") != 0) {
+                continue;
+            }
+
             if (line.find("export ISPN_CONTAINER_ID=") == 0) {
-                containerID = line.substr(26);
+                containerID = line.substr(25);  // "export ISPN_CONTAINER_ID=" is 25 chars
             } else if (line.find("export ISPN_HOST=") == 0) {
                 host = line.substr(17);
             } else if (line.find("export ISPN_PORT=") == 0) {

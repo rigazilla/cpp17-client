@@ -6,6 +6,14 @@
 
    <cache-container name="default" statistics="true">
       <!-- NO <security><authorization/> = no authorization required -->
+
+      <!-- Enable clustering/transport for distributed caches -->
+      <transport cluster="${infinispan.cluster.name:cluster}" stack="${infinispan.cluster.stack:tcp}"/>
+
+      <!-- Default distributed cache template for auto-created caches -->
+      <distributed-cache-configuration name="org.infinispan.DIST_SYNC" mode="SYNC">
+         <encoding media-type="application/octet-stream"/>
+      </distributed-cache-configuration>
    </cache-container>
 
    <server xmlns="urn:infinispan:server:16.0">

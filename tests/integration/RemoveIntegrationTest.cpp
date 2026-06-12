@@ -17,22 +17,19 @@ using namespace hotrod::test;
 
 namespace {
 
-// Helper: Create cache via REST API
-bool createCacheViaREST(const std::string& cacheName) {
-    std::string port = std::to_string(InfinispanTestEnvironment::port);
-    std::string host = InfinispanTestEnvironment::host;
-
-    std::string createCmd = "timeout 5 curl -s -X POST \"http://" + host + ":" + port +
-                           "/rest/v2/caches/" + cacheName + "\" >/dev/null 2>&1 || true";
-    system(createCmd.c_str());
-    return true;
+// Helper: Create cache via CLI (same approach as Go client)
+void createCacheViaCLI(const std::string& cacheName) {
+    std::string cmd = "docker exec " + InfinispanTestEnvironment::containerID +
+                     " bash -c \"echo 'create cache --template=org.infinispan.DIST_SYNC " + cacheName +
+                     "' | /opt/infinispan/bin/cli.sh -c http://admin:password@localhost:11222\" >/dev/null 2>&1";
+    system(cmd.c_str());
 }
 
 } // anonymous namespace
 
 // Test 1: PUT→REMOVE→GET (key should not exist after remove)
 TEST(RemoveIntegrationTest, PutRemoveGet) {
-    createCacheViaREST("testcache");
+    createCacheViaCLI("testcache");
 
     RemoteCache cache(InfinispanTestEnvironment::host,
                       InfinispanTestEnvironment::port,
@@ -63,7 +60,7 @@ TEST(RemoveIntegrationTest, PutRemoveGet) {
 
 // Test 2: REMOVE non-existent key
 TEST(RemoveIntegrationTest, RemoveNonExistent) {
-    createCacheViaREST("testcache");
+    createCacheViaCLI("testcache");
 
     RemoteCache cache(InfinispanTestEnvironment::host,
                       InfinispanTestEnvironment::port,
@@ -82,7 +79,7 @@ TEST(RemoveIntegrationTest, RemoveNonExistent) {
 
 // Test 3: REMOVE with large value
 TEST(RemoveIntegrationTest, RemoveLargeValue) {
-    createCacheViaREST("testcache");
+    createCacheViaCLI("testcache");
 
     RemoteCache cache(InfinispanTestEnvironment::host,
                       InfinispanTestEnvironment::port,
@@ -114,7 +111,7 @@ TEST(RemoveIntegrationTest, RemoveLargeValue) {
 
 // Test 4: REMOVE empty value
 TEST(RemoveIntegrationTest, RemoveEmptyValue) {
-    createCacheViaREST("testcache");
+    createCacheViaCLI("testcache");
 
     RemoteCache cache(InfinispanTestEnvironment::host,
                       InfinispanTestEnvironment::port,
@@ -139,7 +136,7 @@ TEST(RemoveIntegrationTest, RemoveEmptyValue) {
 
 // Test 5: Multiple REMOVEs on same connection
 TEST(RemoveIntegrationTest, MultipleRemoves) {
-    createCacheViaREST("testcache");
+    createCacheViaCLI("testcache");
 
     RemoteCache cache(InfinispanTestEnvironment::host,
                       InfinispanTestEnvironment::port,
@@ -180,7 +177,7 @@ TEST(RemoveIntegrationTest, MultipleRemoves) {
 
 // Test 6: REMOVE without retrieving previous value
 TEST(RemoveIntegrationTest, RemoveWithoutPreviousValue) {
-    createCacheViaREST("testcache");
+    createCacheViaCLI("testcache");
 
     RemoteCache cache(InfinispanTestEnvironment::host,
                       InfinispanTestEnvironment::port,
@@ -208,8 +205,8 @@ TEST(RemoveIntegrationTest, RemoveWithoutPreviousValue) {
 
 // Test 7: REMOVE from different caches
 TEST(RemoveIntegrationTest, RemoveFromDifferentCaches) {
-    createCacheViaREST("cache1");
-    createCacheViaREST("cache2");
+    createCacheViaCLI("cache1");
+    createCacheViaCLI("cache2");
 
     RemoteCache cache1(InfinispanTestEnvironment::host,
                        InfinispanTestEnvironment::port,

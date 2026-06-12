@@ -19,15 +19,12 @@ using namespace hotrod::test;
 
 namespace {
 
-// Helper: Create cache via REST API
-bool createCacheViaREST(const std::string& cacheName) {
-    std::string port = std::to_string(InfinispanTestEnvironment::port);
-    std::string host = InfinispanTestEnvironment::host;
-
-    std::string createCmd = "timeout 5 curl -s -X POST \"http://" + host + ":" + port +
-                           "/rest/v2/caches/" + cacheName + "\" >/dev/null 2>&1 || true";
-    system(createCmd.c_str());
-    return true;
+// Helper: Create cache via CLI (same approach as Go client)
+void createCacheViaCLI(const std::string& cacheName) {
+    std::string cmd = "docker exec " + InfinispanTestEnvironment::containerID +
+                     " bash -c \"echo 'create cache --template=org.infinispan.DIST_SYNC " + cacheName +
+                     "' | /opt/infinispan/bin/cli.sh -c http://admin:password@localhost:11222\" >/dev/null 2>&1";
+    system(cmd.c_str());
 }
 
 } // anonymous namespace
@@ -35,7 +32,7 @@ bool createCacheViaREST(const std::string& cacheName) {
 // Test 1: PUT and GET simple key-value
 TEST(PutIntegrationTest, PutAndGetSimple) {
     // Ensure cache exists
-    createCacheViaREST("testcache");
+    createCacheViaCLI("testcache");
     RemoteCache cache(InfinispanTestEnvironment::host,
                       InfinispanTestEnvironment::port,
                       "testcache");
@@ -61,7 +58,7 @@ TEST(PutIntegrationTest, PutAndGetSimple) {
 
 // Test 2: PUT updates existing key
 TEST(PutIntegrationTest, PutUpdateExisting) {
-    createCacheViaREST("testcache");
+    createCacheViaCLI("testcache");
 
     RemoteCache cache(InfinispanTestEnvironment::host,
                       InfinispanTestEnvironment::port,
@@ -93,7 +90,7 @@ TEST(PutIntegrationTest, PutUpdateExisting) {
 
 // Test 3: PUT with large value (1000 bytes)
 TEST(PutIntegrationTest, PutLargeValue) {
-    createCacheViaREST("testcache");
+    createCacheViaCLI("testcache");
 
     RemoteCache cache(InfinispanTestEnvironment::host,
                       InfinispanTestEnvironment::port,
@@ -120,7 +117,7 @@ TEST(PutIntegrationTest, PutLargeValue) {
 
 // Test 4: PUT empty value
 TEST(PutIntegrationTest, PutEmptyValue) {
-    createCacheViaREST("testcache");
+    createCacheViaCLI("testcache");
 
     RemoteCache cache(InfinispanTestEnvironment::host,
                       InfinispanTestEnvironment::port,
@@ -145,7 +142,7 @@ TEST(PutIntegrationTest, PutEmptyValue) {
 
 // Test 5: Multiple PUTs on same connection
 TEST(PutIntegrationTest, MultiplePuts) {
-    createCacheViaREST("testcache");
+    createCacheViaCLI("testcache");
 
     RemoteCache cache(InfinispanTestEnvironment::host,
                       InfinispanTestEnvironment::port,
@@ -174,8 +171,8 @@ TEST(PutIntegrationTest, MultiplePuts) {
 
 // Test 6: PUT to different caches
 TEST(PutIntegrationTest, PutToDifferentCaches) {
-    createCacheViaREST("cache1");
-    createCacheViaREST("cache2");
+    createCacheViaCLI("cache1");
+    createCacheViaCLI("cache2");
 
     RemoteCache cache1(InfinispanTestEnvironment::host,
                        InfinispanTestEnvironment::port,
@@ -231,7 +228,7 @@ TEST(PutIntegrationTest, PutAfterDisconnect) {
 
 // Test 8: PUT with lifespan (basic test, no expiration check)
 TEST(PutIntegrationTest, PutWithLifespan) {
-    createCacheViaREST("testcache");
+    createCacheViaCLI("testcache");
 
     RemoteCache cache(InfinispanTestEnvironment::host,
                       InfinispanTestEnvironment::port,
