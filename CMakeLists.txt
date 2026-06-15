@@ -105,6 +105,16 @@ if(GTest_FOUND)
         tests/integration/RemoveIntegrationTest.cpp
     )
 
+    # Topology integration tests (multi-server cluster)
+    add_executable(topology_integration_tests
+        tests/integration/TopologyChangeTest.cpp
+    )
+
+    # Concurrent clients test (single server, BASIC intelligence)
+    add_executable(concurrent_clients_tests
+        tests/integration/ConcurrentClientsTest.cpp
+    )
+
     target_link_libraries(ping_integration_tests
         PRIVATE
             hotrod-client
@@ -133,10 +143,26 @@ if(GTest_FOUND)
             # Note: NOT gtest_main - we provide our own main()
     )
 
+    target_link_libraries(topology_integration_tests
+        PRIVATE
+            hotrod-client
+            GTest::gtest
+            # Note: NOT gtest_main - we provide our own main()
+    )
+
+    target_link_libraries(concurrent_clients_tests
+        PRIVATE
+            hotrod-client
+            GTest::gtest
+            # Note: NOT gtest_main - we provide our own main()
+    )
+
     add_test(NAME PingIntegrationTests COMMAND ping_integration_tests)
     add_test(NAME GetIntegrationTests COMMAND get_integration_tests)
     add_test(NAME PutIntegrationTests COMMAND put_integration_tests)
     add_test(NAME RemoveIntegrationTests COMMAND remove_integration_tests)
+    add_test(NAME TopologyIntegrationTests COMMAND topology_integration_tests)
+    add_test(NAME ConcurrentClientsTests COMMAND concurrent_clients_tests)
 
     # Set working directory so scripts can be found
     set_tests_properties(PingIntegrationTests PROPERTIES
@@ -154,6 +180,14 @@ if(GTest_FOUND)
     set_tests_properties(RemoveIntegrationTests PROPERTIES
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         LABELS "integration;docker"
+    )
+    set_tests_properties(TopologyIntegrationTests PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        LABELS "integration;docker;topology;multi-server"
+    )
+    set_tests_properties(ConcurrentClientsTests PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        LABELS "integration;docker;concurrent"
     )
 
     message(STATUS "Google Test found - unit tests and integration tests enabled")

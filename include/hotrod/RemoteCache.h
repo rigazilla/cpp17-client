@@ -120,12 +120,34 @@ public:
      */
     void setCacheName(const std::string& name) { cacheName_ = name; }
 
+    /**
+     * Set client intelligence level.
+     *
+     * Controls what topology information the server sends in responses:
+     * - BASIC (0x01): No topology updates, use configured server list only
+     * - TOPOLOGY_AWARE (0x02): Receive topology updates, round-robin to servers
+     * - HASH_DISTRIBUTION_AWARE (0x03): Topology + routing to primary owner (default in Java)
+     *
+     * @param intelligence The client intelligence level
+     */
+    void setClientIntelligence(ClientIntelligence intelligence) {
+        clientIntelligence_ = intelligence;
+    }
+
+    /**
+     * Get current client intelligence level.
+     */
+    ClientIntelligence getClientIntelligence() const {
+        return clientIntelligence_;
+    }
+
 private:
     std::string host_;
     uint16_t port_;
     std::string cacheName_;
     std::unique_ptr<Connection> connection_;
     uint64_t messageIdCounter_;  // For generating unique message IDs
+    ClientIntelligence clientIntelligence_;  // Client intelligence level
 
     /**
      * Get next message ID.

@@ -5,12 +5,14 @@
 namespace hotrod {
 
 RemoteCache::RemoteCache(const std::string& host, uint16_t port)
-    : host_(host), port_(port), cacheName_(""), messageIdCounter_(0) {
+    : host_(host), port_(port), cacheName_(""), messageIdCounter_(0),
+      clientIntelligence_(ClientIntelligence::BASIC) {
     connection_ = std::make_unique<Connection>(host, port);
 }
 
 RemoteCache::RemoteCache(const std::string& host, uint16_t port, const std::string& cacheName)
-    : host_(host), port_(port), cacheName_(cacheName), messageIdCounter_(0) {
+    : host_(host), port_(port), cacheName_(cacheName), messageIdCounter_(0),
+      clientIntelligence_(ClientIntelligence::BASIC) {
     connection_ = std::make_unique<Connection>(host, port);
 }
 
@@ -97,7 +99,7 @@ bool RemoteCache::ping() {
     header.opcode = 0x17;   // PING_REQUEST
     header.cacheName = cacheName_;
     header.flags = 0;
-    header.clientIntelligence = ClientIntelligence::BASIC;  // TODO: Use HASH_AWARE when topology is integrated
+    header.clientIntelligence = clientIntelligence_;
     header.topologyId = 0;  // TODO: Track topology ID
     header.keyMediaType = 0;
     header.valueMediaType = 0;
@@ -233,7 +235,7 @@ bool RemoteCache::get(const ByteArray& key, ByteArray& value) {
     header.opcode = 0x03;   // GET_REQUEST
     header.cacheName = cacheName_;
     header.flags = 0;
-    header.clientIntelligence = ClientIntelligence::BASIC;  // TODO: Use HASH_AWARE when topology is integrated
+    header.clientIntelligence = clientIntelligence_;
     header.topologyId = 0;  // TODO: Track topology ID
     header.keyMediaType = 0;
     header.valueMediaType = 0;
@@ -310,7 +312,7 @@ bool RemoteCache::put(const ByteArray& key, const ByteArray& value,
     header.opcode = 0x01;   // PUT_REQUEST
     header.cacheName = cacheName_;
     header.flags = 0;
-    header.clientIntelligence = ClientIntelligence::BASIC;  // TODO: Use HASH_AWARE when topology is integrated
+    header.clientIntelligence = clientIntelligence_;
     header.topologyId = 0;  // TODO: Track topology ID
     header.keyMediaType = 0;
     header.valueMediaType = 0;
@@ -406,7 +408,7 @@ bool RemoteCache::remove(const ByteArray& key, ByteArray* previousValue) {
     header.opcode = 0x0B;   // REMOVE_REQUEST
     header.cacheName = cacheName_;
     header.flags = 0;
-    header.clientIntelligence = ClientIntelligence::BASIC;  // TODO: Use HASH_AWARE when topology is integrated
+    header.clientIntelligence = clientIntelligence_;
     header.topologyId = 0;  // TODO: Track topology ID
     header.keyMediaType = 0;
     header.valueMediaType = 0;
