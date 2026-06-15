@@ -47,7 +47,7 @@ ByteArray RemoteCache::sendRequest(const ByteArray& request) {
     connection_->send(request);
 
     // Read response header byte by byte
-    // Format: magic(1) + messageId(vLong) + opcode(1) + status(1) + topologyChange(1)
+    // Format: magic(1) + messageId(vLong) + opcode(1) + status(1) + topologyChange(1) + [topology_data]
 
     ByteArray responseBuffer;
 
@@ -79,14 +79,36 @@ ByteArray RemoteCache::sendRequest(const ByteArray& request) {
     ByteArray tail = connection_->receive(3);
     responseBuffer.insert(responseBuffer.end(), tail.begin(), tail.end());
 
-    // DEBUG: Log response info
-    fprintf(stderr, "[DEBUG] Total response bytes read: %zu (magic:1 + msgId:%d + tail:3)\n",
-            responseBuffer.size(), msgIdBytes);
-    fprintf(stderr, "[DEBUG] Response bytes (hex): ");
-    for (size_t i = 0; i < responseBuffer.size(); i++) {
-        fprintf(stderr, "%02X ", responseBuffer[i]);
+    uint8_t topologyMarker = tail[2];  // Last byte of tail
+
+    // DEBUG: Log response header
+    fprintf(stderr, "[DEBUG] Response header read: magic:1 + msgId:%d + opcode:1 + status:1 + topoMarker:1\n", msgIdBytes);
+    fprintf(stderr, "[DEBUG] Topology marker: 0x%02X\n", topologyMarker);
+
+    // If topology data is present, read and parse it using HeaderCodec::readTopologyInfo
+    if (topologyMarker != 0 &&
+        (clientIntelligence_ == ClientIntelligence::TOPOLOGY_AWARE ||
+         clientIntelligence_ == ClientIntelligence::HASH_DISTRIBUTION_AWARE)) {
+
+        fprintf(stderr, "[DEBUG] Reading topology data (intelligence: 0x%02X)...\n",
+                static_cast<uint8_t>(clientIntelligence_));
+
+        try {
+            // Read topology directly from connection - it knows how to parse vints progressively
+            topology_ = HeaderCodec::readTopologyInfo(connection_.get(), clientIntelligence_);
+
+            fprintf(stderr, "[DEBUG] Topology parsed: ID=%d, servers=%zu\n",
+                    topology_.topologyId, topology_.servers.size());
+            for (size_t i = 0; i < topology_.servers.size(); i++) {
+                fprintf(stderr, "[DEBUG]   Server %zu: %s:%u\n", i,
+                        topology_.servers[i].host.c_str(), topology_.servers[i].port);
+            }
+        } catch (const std::exception& e) {
+            fprintf(stderr, "[WARN] Failed to parse topology: %s\n", e.what());
+        }
     }
-    fprintf(stderr, "\n");
+
+    fprintf(stderr, "[DEBUG] Total response bytes: %zu\n", responseBuffer.size());
 
     return responseBuffer;
 }
@@ -100,7 +122,7 @@ bool RemoteCache::ping() {
     header.cacheName = cacheName_;
     header.flags = 0;
     header.clientIntelligence = clientIntelligence_;
-    header.topologyId = 0;  // TODO: Track topology ID
+    header.topologyId = topology_.topologyId;
     header.keyMediaType = 0;
     header.valueMediaType = 0;
     // otherParams empty (count = 0)
@@ -236,7 +258,7 @@ bool RemoteCache::get(const ByteArray& key, ByteArray& value) {
     header.cacheName = cacheName_;
     header.flags = 0;
     header.clientIntelligence = clientIntelligence_;
-    header.topologyId = 0;  // TODO: Track topology ID
+    header.topologyId = topology_.topologyId;
     header.keyMediaType = 0;
     header.valueMediaType = 0;
     // otherParams empty (count = 0)
@@ -313,7 +335,7 @@ bool RemoteCache::put(const ByteArray& key, const ByteArray& value,
     header.cacheName = cacheName_;
     header.flags = 0;
     header.clientIntelligence = clientIntelligence_;
-    header.topologyId = 0;  // TODO: Track topology ID
+    header.topologyId = topology_.topologyId;
     header.keyMediaType = 0;
     header.valueMediaType = 0;
     // otherParams empty (count = 0)
@@ -409,7 +431,7 @@ bool RemoteCache::remove(const ByteArray& key, ByteArray* previousValue) {
     header.cacheName = cacheName_;
     header.flags = 0;
     header.clientIntelligence = clientIntelligence_;
-    header.topologyId = 0;  // TODO: Track topology ID
+    header.topologyId = topology_.topologyId;
     header.keyMediaType = 0;
     header.valueMediaType = 0;
     // otherParams empty (count = 0)

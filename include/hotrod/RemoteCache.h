@@ -141,6 +141,21 @@ public:
         return clientIntelligence_;
     }
 
+    /**
+     * Get current topology information.
+     * Only populated if client intelligence is TOPOLOGY_AWARE or HASH_DISTRIBUTION_AWARE.
+     */
+    const TopologyInfo& getTopology() const {
+        return topology_;
+    }
+
+    /**
+     * Get current topology ID.
+     */
+    VInt getTopologyId() const {
+        return topology_.topologyId;
+    }
+
 private:
     std::string host_;
     uint16_t port_;
@@ -148,6 +163,7 @@ private:
     std::unique_ptr<Connection> connection_;
     uint64_t messageIdCounter_;  // For generating unique message IDs
     ClientIntelligence clientIntelligence_;  // Client intelligence level
+    TopologyInfo topology_;  // Current cluster topology
 
     /**
      * Get next message ID.
