@@ -1,0 +1,111 @@
+version: '3.8'
+
+# Multi-node Infinispan cluster for topology integration tests
+# Usage:
+#   Start all 4 nodes: docker-compose -f docker-compose-cluster.yml up -d
+#   Start 3 nodes:     docker-compose -f docker-compose-cluster.yml up -d ispn-node1 ispn-node2 ispn-node3
+#   Add node 4:        docker-compose -f docker-compose-cluster.yml up -d ispn-node4
+#   Stop node 3:       docker-compose -f docker-compose-cluster.yml stop ispn-node3
+#   View logs:         docker-compose -f docker-compose-cluster.yml logs -f
+
+networks:
+  ispn-cluster:
+    driver: bridge
+    name: hotrod-test-cluster
+
+services:
+  # Node 1: Primary node, always started first
+  ispn-node1:
+    image: quay.io/infinispan/server:16.0
+    container_name: ispn-node1
+    hostname: ispn-node1
+    networks:
+      - ispn-cluster
+    ports:
+      - "11222:11222"  # Hot Rod
+      - "11223:11223"  # REST (for verification)
+    # Anonymous mode - no authentication required
+    # environment: {}
+    volumes:
+      - ./infinispan-cluster.xml:/opt/infinispan/server/conf/infinispan.xml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11222/rest/v2/cache-managers/default/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+
+  # Node 2: Second node
+  ispn-node2:
+    image: quay.io/infinispan/server:16.0
+    container_name: ispn-node2
+    hostname: ispn-node2
+    networks:
+      - ispn-cluster
+    ports:
+      - "11322:11222"  # Hot Rod
+      - "11323:11223"  # REST
+    environment:
+      - USER=admin
+      - PASS=password
+    volumes:
+      - ./infinispan-cluster.xml:/opt/infinispan/server/conf/infinispan.xml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11222/rest/v2/cache-managers/default/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+    depends_on:
+      ispn-node1:
+        condition: service_healthy
+
+  # Node 3: Third node (optional, for 3-node tests)
+  ispn-node3:
+    image: quay.io/infinispan/server:16.0
+    container_name: ispn-node3
+    hostname: ispn-node3
+    networks:
+      - ispn-cluster
+    ports:
+      - "11422:11222"  # Hot Rod
+      - "11423:11223"  # REST
+    environment:
+      - USER=admin
+      - PASS=password
+    volumes:
+      - ./infinispan-cluster.xml:/opt/infinispan/server/conf/infinispan.xml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11222/rest/v2/cache-managers/default/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+    depends_on:
+      ispn-node1:
+        condition: service_healthy
+
+  # Node 4: Fourth node (optional, for 4-node tests)
+  ispn-node4:
+    image: quay.io/infinispan/server:16.0
+    container_name: ispn-node4
+    hostname: ispn-node4
+    networks:
+      - ispn-cluster
+    ports:
+      - "11522:11222"  # Hot Rod
+      - "11523:11223"  # REST
+    environment:
+      - USER=admin
+      - PASS=password
+    volumes:
+      - ./infinispan-cluster.xml:/opt/infinispan/server/conf/infinispan.xml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11222/rest/v2/cache-managers/default/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+    depends_on:
+      ispn-node1:
+        condition: service_healthy

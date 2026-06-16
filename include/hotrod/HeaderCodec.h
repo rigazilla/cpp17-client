@@ -88,6 +88,14 @@ struct ServerAddress {
 
     ServerAddress() : port(0) {}
     ServerAddress(const std::string& h, uint16_t p) : host(h), port(p) {}
+
+    bool operator==(const ServerAddress& other) const {
+        return host == other.host && port == other.port;
+    }
+
+    bool operator!=(const ServerAddress& other) const {
+        return !(*this == other);
+    }
 };
 
 /**
