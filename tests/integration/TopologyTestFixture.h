@@ -152,7 +152,7 @@ protected:
         // Use curl to query cluster size
         std::string cmd = "curl -s --digest -u admin:password "
                          "'http://" + server.host + ":" + std::to_string(server.port) +
-                         "/rest/v2/cluster?action=distribution' 2>/dev/null | "
+                         "/rest/v3/cluster/_distribution' 2>/dev/null | "
                          "grep -o 'node_name' | wc -l";
 
         FILE* pipe = popen(cmd.c_str(), "r");
@@ -199,9 +199,9 @@ protected:
         for (const auto& server : MultiServerTestEnvironment::servers) {
             if (server.port == 0) continue;  // Skip inactive nodes
 
-            std::string cmd = "curl -s --digest -u admin:password -X DELETE "
+            std::string cmd = "curl -s --digest -u admin:password -X POST "
                              "'http://" + server.host + ":" + std::to_string(server.port) +
-                             "/rest/v2/caches/" + std::string(TEST_CACHE) + "?action=clear' "
+                             "/rest/v3/caches/" + std::string(TEST_CACHE) + "/_clear' "
                              "2>/dev/null";
             system(cmd.c_str());
         }

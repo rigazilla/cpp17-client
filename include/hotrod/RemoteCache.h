@@ -3,9 +3,11 @@
 #include "Types.h"
 #include "Connection.h"
 #include "HeaderCodec.h"
+#include "ConsistentHash.h"
 #include <string>
 #include <memory>
 #include <cstdint>
+#include <map>
 
 namespace hotrod {
 
@@ -153,7 +155,14 @@ public:
      * Get current topology ID.
      */
     VInt getTopologyId() const {
-        return topology_.topologyId;
+        return topology_.getTopologyId();
+    }
+
+    /**
+     * Get the ConsistentHash instance (for testing/debugging).
+     */
+    const ConsistentHash& getConsistentHash() const {
+        return consistentHash_;
     }
 
 private:
@@ -164,6 +173,11 @@ private:
     uint64_t messageIdCounter_;  // For generating unique message IDs
     ClientIntelligence clientIntelligence_;  // Client intelligence level
     TopologyInfo topology_;  // Current cluster topology
+    ConsistentHash consistentHash_;  // Hash-aware routing (for HASH_DISTRIBUTION_AWARE)
+
+    // Connection pool: one connection per server (simple pooling)
+    // Key = "host:port", Value = Connection instance
+    std::map<std::string, std::unique_ptr<Connection>> connectionPool_;
 
     /**
      * Get next message ID.
@@ -171,9 +185,57 @@ private:
     uint64_t nextMessageId();
 
     /**
-     * Send request and receive response.
+     * Send request and receive response (uses default connection).
      */
     ByteArray sendRequest(const ByteArray& request);
+
+    /**
+     * Send request to a specific connection and receive response.
+     *
+     * @param request The request bytes to send
+     * @param conn The connection to use (from selectServerForKey or default)
+     * @return Response header bytes (topology already parsed and consumed)
+     */
+    ByteArray sendRequestToConnection(const ByteArray& request, Connection* conn);
+
+    /**
+     * Select server connection for a given key using hash-aware routing.
+     *
+     * When clientIntelligence == HASH_DISTRIBUTION_AWARE and hash topology is available:
+     * - Calculates the segment for the key
+     * - Finds the primary owner server for that segment
+     * - Returns connection to that server (creating if needed)
+     *
+     * Otherwise falls back to the default connection.
+     *
+     * @param key The key to route
+     * @return Connection to use for this key (never null)
+     */
+    Connection* selectServerForKey(const ByteArray& key);
+
+    /**
+     * Get or create connection for a specific server.
+     *
+     * @param server Server information (host, port, hashId)
+     * @return Connection to the server (never null)
+     */
+    Connection* getConnectionForServer(const ServerInfo& server);
+
+    /**
+     * Send request with automatic failover.
+     * Tries all owners (primary + backups), then any server in topology.
+     *
+     * @param request The request bytes to send
+     * @param key The key (for hash-aware routing and logging)
+     * @return Pair of (response, connection) from first successful server
+     */
+    std::pair<ByteArray, Connection*> sendRequestWithFailover(const ByteArray& request, const ByteArray& key);
+
+    /**
+     * Clean up connections to servers no longer in topology.
+     * Called after topology updates.
+     */
+    void cleanupStaleConnections();
 };
 
 } // namespace hotrod

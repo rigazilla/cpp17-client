@@ -3,7 +3,7 @@
 #
 # Usage: ./add_cluster_node.sh <cluster_id> <node_number>
 #   cluster_id: Cluster ID from start_cluster.sh
-#   node_number: Node number to add (2-4)
+#   node_number: Node number to add (1-4)
 
 set -e
 
@@ -16,8 +16,8 @@ if [ -z "$CLUSTER_ID" ] || [ -z "$NODE_NUM" ]; then
     exit 1
 fi
 
-if [ "$NODE_NUM" -lt 2 ] || [ "$NODE_NUM" -gt 4 ]; then
-    echo "ERROR: node_number must be between 2 and 4" >&2
+if [ "$NODE_NUM" -lt 1 ] || [ "$NODE_NUM" -gt 4 ]; then
+    echo "ERROR: node_number must be between 1 and 4" >&2
     exit 1
 fi
 

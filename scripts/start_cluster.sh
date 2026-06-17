@@ -69,7 +69,7 @@ FIRST_CONTAINER="ispn-node1"  # Docker Compose V2 uses service name directly
 timeout 30 bash -c "
 while true; do
     MEMBERS=\$(docker exec $FIRST_CONTAINER curl -s --digest -u admin:password \
-        'http://localhost:11222/rest/v2/cluster?action=distribution' 2>/dev/null | \
+        'http://localhost:11222/rest/v3/cluster/_distribution' 2>/dev/null | \
         grep -o 'node_name' | wc -l || echo 0)
 
     if [ \"\$MEMBERS\" -ge \"$NUM_NODES\" ]; then

@@ -7,6 +7,10 @@
 
 namespace hotrod {
 
+// Forward declarations
+class Connection;
+enum class ClientIntelligence : uint8_t;
+
 /**
  * Represents a single server in the cluster.
  */
@@ -41,25 +45,32 @@ public:
     int getTopologyId() const { return topologyId_; }
 
     /**
+     * Set topology ID (for testing).
+     */
+    void setTopologyId(int id) { topologyId_ = id; }
+
+    /**
      * Get list of all servers in the topology.
      */
     const std::vector<ServerInfo>& getServers() const { return servers_; }
 
     /**
-     * Parse topology update from response data.
+     * Read and parse topology update from connection.
      *
-     * Wire format (when topology_change_marker = 0x01):
-     * - Topology ID (vInt)
-     * - Number of servers (vInt)
-     * - For each server:
-     *   - Hostname (string = vInt length + UTF-8 bytes)
-     *   - Port (uint16, 2 bytes big-endian)
-     *   - Hash ID (int32, 4 bytes signed, big-endian)
+     * Reads topology and optionally hash distribution data directly from connection.
+     * Used when topology marker is set in response header.
      *
-     * @param buffer The buffer containing topology data
-     * @param offset Current read position (will be updated)
+     * @param connection Connection to read from
+     * @param intelligence Client intelligence level
+     * @param hashFunctionVersion Output: hash function version (for HASH_DISTRIBUTION_AWARE)
+     * @param numSegments Output: number of segments (for HASH_DISTRIBUTION_AWARE)
+     * @param segmentOwners Output: segment ownership (for HASH_DISTRIBUTION_AWARE)
      */
-    void parseTopologyUpdate(const ByteArray& buffer, size_t& offset);
+    void parseTopologyInfo(Connection* connection,
+                          ClientIntelligence intelligence,
+                          uint8_t& hashFunctionVersion,
+                          VInt& numSegments,
+                          std::vector<std::vector<uint8_t>>& segmentOwners);
 
     /**
      * Select a server using round-robin strategy.

@@ -77,47 +77,6 @@ struct RequestHeader {
     std::map<std::string, ByteArray> otherParams;
 };
 
-/**
- * Server address in topology.
- *
- * Reference: hotrod40.ksy (server_address)
- */
-struct ServerAddress {
-    std::string host;
-    uint16_t port;
-
-    ServerAddress() : port(0) {}
-    ServerAddress(const std::string& h, uint16_t p) : host(h), port(p) {}
-
-    bool operator==(const ServerAddress& other) const {
-        return host == other.host && port == other.port;
-    }
-
-    bool operator!=(const ServerAddress& other) const {
-        return !(*this == other);
-    }
-};
-
-/**
- * Topology information received from server.
- *
- * Format depends on client intelligence:
- * - TOPOLOGY_AWARE (0x02): Only topologyId and servers
- * - HASH_DISTRIBUTION_AWARE (0x03): Full hash distribution info
- *
- * Reference: hotrod40.ksy (topology_aware_header, hash_dist_header_v2)
- */
-struct TopologyInfo {
-    VInt topologyId = 0;
-    std::vector<ServerAddress> servers;
-
-    // Only for HASH_DISTRIBUTION_AWARE (0x03)
-    uint8_t hashFunctionVersion = 0;
-    VInt numSegments = 0;
-    std::vector<std::vector<uint8_t>> segmentOwners;  // [segment][owner_indices]
-
-    TopologyInfo() = default;
-};
 
 /**
  * Hot Rod Protocol 4.0 response header.
@@ -146,24 +105,6 @@ public:
 
     // Response header decoding
     static ResponseHeader readResponseHeader(const ByteArray& buffer, size_t& offset);
-
-    /**
-     * Read topology information from connection.
-     *
-     * Format depends on client intelligence level:
-     * - TOPOLOGY_AWARE (0x02): topology_id + num_servers + servers[]
-     * - HASH_DISTRIBUTION_AWARE (0x03): above + hash_function + segments[]
-     *
-     * Reads bytes from the connection as needed, parsing vints progressively.
-     *
-     * @param connection Connection to read from
-     * @param intelligence Client intelligence level used in request
-     * @return Parsed topology information
-     *
-     * Reference: hotrod40.ksy (topology_aware_header, hash_dist_header_v2)
-     */
-    static TopologyInfo readTopologyInfo(Connection* connection,
-                                         ClientIntelligence intelligence);
 };
 
 } // namespace hotrod

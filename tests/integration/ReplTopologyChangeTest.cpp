@@ -90,7 +90,7 @@ protected:
 
             std::string cmd = "curl -s -X DELETE "
                             "'http://" + server.host + ":" + std::to_string(server.port) +
-                            "/rest/v2/caches/" + std::string(TEST_CACHE) + "?action=clear' "
+                            "/rest/v3/caches/" + std::string(TEST_CACHE) + "/_clear"
                             "2>/dev/null";
             system(cmd.c_str());
         }

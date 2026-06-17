@@ -1,5 +1,7 @@
 #include "hotrod/TopologyInfo.h"
 #include "hotrod/Codec.h"
+#include "hotrod/Connection.h"
+#include "hotrod/HeaderCodec.h"
 #include <stdexcept>
 #include <algorithm>
 
@@ -7,52 +9,6 @@ namespace hotrod {
 
 TopologyInfo::TopologyInfo()
     : topologyId_(0), roundRobinIndex_(0) {
-}
-
-void TopologyInfo::parseTopologyUpdate(const ByteArray& buffer, size_t& offset) {
-    // Read topology ID (vInt)
-    topologyId_ = static_cast<int>(Codec::readVInt(buffer, offset));
-
-    // Read number of servers (vInt)
-    VInt numServers = Codec::readVInt(buffer, offset);
-
-    // Clear existing servers
-    servers_.clear();
-
-    // Read each server
-    for (VInt i = 0; i < numServers; i++) {
-        ServerInfo server;
-
-        // Read hostname (string = vInt length + UTF-8)
-        server.host = Codec::readString(buffer, offset);
-
-        // Read port (uint16, 2 bytes big-endian)
-        if (offset + 2 > buffer.size()) {
-            throw std::runtime_error("TopologyInfo::parseTopologyUpdate: buffer too short for port");
-        }
-        server.port = static_cast<uint16_t>((buffer[offset] << 8) | buffer[offset + 1]);
-        offset += 2;
-
-        // Read hash ID (int32, 4 bytes signed big-endian)
-        if (offset + 4 > buffer.size()) {
-            throw std::runtime_error("TopologyInfo::parseTopologyUpdate: buffer too short for hash ID");
-        }
-        server.hashId = static_cast<int32_t>(
-            (buffer[offset] << 24) |
-            (buffer[offset + 1] << 16) |
-            (buffer[offset + 2] << 8) |
-            buffer[offset + 3]
-        );
-        offset += 4;
-
-        // Add server if not duplicate
-        if (std::find(servers_.begin(), servers_.end(), server) == servers_.end()) {
-            servers_.push_back(server);
-        }
-    }
-
-    // Reset round-robin index
-    roundRobinIndex_ = 0;
 }
 
 const ServerInfo* TopologyInfo::selectServer() {
@@ -87,6 +43,91 @@ void TopologyInfo::removeServer(const std::string& host, uint16_t port) {
 void TopologyInfo::clearServers() {
     servers_.clear();
     roundRobinIndex_ = 0;
+}
+
+void TopologyInfo::parseTopologyInfo(Connection* connection,
+                                    ClientIntelligence intelligence,
+                                    uint8_t& hashFunctionVersion,
+                                    VInt& numSegments,
+                                    std::vector<std::vector<uint8_t>>& segmentOwners) {
+    // Helper: read vint from connection
+    auto readVInt = [connection]() -> VInt {
+        ByteArray vintBytes;
+        while (true) {
+            ByteArray byte = connection->receive(1);
+            vintBytes.push_back(byte[0]);
+            if ((byte[0] & 0x80) == 0) break;
+        }
+        size_t offset = 0;
+        return Codec::readVInt(vintBytes, offset);
+    };
+
+    // Helper: read string from connection (length-prefixed)
+    auto readString = [connection, &readVInt]() -> std::string {
+        VInt length = readVInt();
+        if (length == 0) return "";
+        ByteArray strBytes = connection->receive(length);
+        return std::string(strBytes.begin(), strBytes.end());
+    };
+
+    // 1. Read topology ID (vInt)
+    topologyId_ = readVInt();
+
+    // 2. Read number of servers (vInt)
+    VInt numServers = readVInt();
+
+    // 3. Read server addresses
+    servers_.clear();
+    servers_.reserve(numServers);
+
+    for (VInt i = 0; i < numServers; i++) {
+        ServerInfo server;
+
+        // Read host (length-prefixed string)
+        server.host = readString();
+
+        // Read port (u2 = 16-bit unsigned, big-endian)
+        ByteArray portBytes = connection->receive(2);
+        server.port = (static_cast<uint16_t>(portBytes[0]) << 8) |
+                      static_cast<uint16_t>(portBytes[1]);
+
+        // Protocol 4.0: hashId NOT sent in topology - use server index
+        server.hashId = static_cast<int32_t>(i);
+
+        // Add server if not duplicate
+        if (std::find(servers_.begin(), servers_.end(), server) == servers_.end()) {
+            servers_.push_back(server);
+        }
+    }
+
+    // Reset round-robin index
+    roundRobinIndex_ = 0;
+
+    // 4. For HASH_DISTRIBUTION_AWARE, read hash distribution info
+    if (intelligence == ClientIntelligence::HASH_DISTRIBUTION_AWARE) {
+        // Read hash function version (u1)
+        ByteArray hashVer = connection->receive(1);
+        hashFunctionVersion = hashVer[0];
+
+        // Read number of segments (vInt)
+        numSegments = readVInt();
+
+        // Read segment owners
+        segmentOwners.clear();
+        segmentOwners.reserve(numSegments);
+
+        for (VInt seg = 0; seg < numSegments; seg++) {
+            // Read number of owners for this segment (u1)
+            ByteArray numOwnersBytes = connection->receive(1);
+            uint8_t numOwners = numOwnersBytes[0];
+
+            // Read owner indices
+            ByteArray ownerIndices = connection->receive(numOwners);
+            std::vector<uint8_t> owners(ownerIndices.begin(), ownerIndices.end());
+
+            segmentOwners.push_back(std::move(owners));
+        }
+    }
 }
 
 } // namespace hotrod

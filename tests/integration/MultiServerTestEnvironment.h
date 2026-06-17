@@ -140,8 +140,8 @@ public:
      * @param nodeNumber Node number to add (2-4)
      */
     static void addNode(int nodeNumber) {
-        if (nodeNumber < 2 || nodeNumber > 4) {
-            throw std::invalid_argument("Node number must be between 2 and 4");
+        if (nodeNumber < 1 || nodeNumber > 4) {
+            throw std::invalid_argument("Node number must be between 1 and 4");
         }
 
         if (clusterID.empty()) {
@@ -181,10 +181,12 @@ public:
         }
         servers[nodeNumber - 1] = newNode;
 
-        // BUG FIX: numServers should be the highest node number, not vector size
-        // The vector can be pre-sized (e.g., size=4) even if we only have 2-3 active nodes
-        if (nodeNumber > numServers) {
-            numServers = nodeNumber;
+        // Recount active servers (same logic as removeNode)
+        numServers = 0;
+        for (const auto& server : servers) {
+            if (server.port != 0) {
+                numServers++;
+            }
         }
         fprintf(stderr, "[DEBUG]   After update: servers.size()=%zu, numServers=%d\n",
                 servers.size(), numServers);

@@ -14,6 +14,13 @@
       <distributed-cache-configuration name="org.infinispan.DIST_SYNC" mode="SYNC">
          <encoding media-type="application/octet-stream"/>
       </distributed-cache-configuration>
+
+      <!-- Actual default distributed cache for hash-aware routing tests -->
+      <distributed-cache name="___defaultcache" mode="SYNC">
+         <encoding media-type="application/octet-stream"/>
+         <memory storage="OFF_HEAP"/>
+         <state-transfer timeout="60000"/>
+      </distributed-cache>
    </cache-container>
 
    <server xmlns="urn:infinispan:server:16.0">

@@ -60,13 +60,14 @@ if(GTest_FOUND)
         tests/unit/CodecTest.cpp
         tests/unit/HeaderCodecTest.cpp
         tests/unit/SCRAMTest.cpp
-        tests/unit/TopologyInfoTest.cpp
+        # tests/unit/TopologyInfoTest.cpp  # Removed - uses deprecated parseTopologyUpdate()
         tests/unit/MurmurHash3Test.cpp
         tests/unit/ConsistentHashTest.cpp
         tests/unit/PingTest.cpp
         tests/unit/GetTest.cpp
         tests/unit/PutTest.cpp
         tests/unit/RemoveTest.cpp
+        tests/unit/HashAwareRoutingTest.cpp
     )
 
     target_link_libraries(unit_tests
@@ -157,12 +158,25 @@ if(GTest_FOUND)
             # Note: NOT gtest_main - we provide our own main()
     )
 
+    # Hash-aware routing integration tests
+    add_executable(hash_aware_routing_integration_tests
+        tests/integration/HashAwareRoutingIntegrationTest.cpp
+    )
+
+    target_link_libraries(hash_aware_routing_integration_tests
+        PRIVATE
+            hotrod-client
+            GTest::gtest
+            # Note: NOT gtest_main - we provide our own main()
+    )
+
     add_test(NAME PingIntegrationTests COMMAND ping_integration_tests)
     add_test(NAME GetIntegrationTests COMMAND get_integration_tests)
     add_test(NAME PutIntegrationTests COMMAND put_integration_tests)
     add_test(NAME RemoveIntegrationTests COMMAND remove_integration_tests)
     add_test(NAME TopologyIntegrationTests COMMAND topology_integration_tests)
     add_test(NAME ConcurrentClientsTests COMMAND concurrent_clients_tests)
+    add_test(NAME HashAwareRoutingIntegrationTests COMMAND hash_aware_routing_integration_tests)
 
     # Set working directory so scripts can be found
     set_tests_properties(PingIntegrationTests PROPERTIES
@@ -188,6 +202,10 @@ if(GTest_FOUND)
     set_tests_properties(ConcurrentClientsTests PROPERTIES
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         LABELS "integration;docker;concurrent"
+    )
+    set_tests_properties(HashAwareRoutingIntegrationTests PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        LABELS "integration;docker;topology;multi-server;hash-aware"
     )
 
     message(STATUS "Google Test found - unit tests and integration tests enabled")

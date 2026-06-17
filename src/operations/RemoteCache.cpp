@@ -1,6 +1,7 @@
 #include "hotrod/RemoteCache.h"
 #include "hotrod/Codec.h"
 #include <stdexcept>
+#include <set>
 
 namespace hotrod {
 
@@ -43,8 +44,17 @@ ByteArray RemoteCache::sendRequest(const ByteArray& request) {
         throw std::runtime_error("Not connected to server");
     }
 
+    // Use default connection
+    return sendRequestToConnection(request, connection_.get());
+}
+
+ByteArray RemoteCache::sendRequestToConnection(const ByteArray& request, Connection* conn) {
+    if (!conn || !conn->isConnected()) {
+        throw std::runtime_error("Connection not available");
+    }
+
     // Send request
-    connection_->send(request);
+    conn->send(request);
 
     // Read response header byte by byte
     // Format: magic(1) + messageId(vLong) + opcode(1) + status(1) + topologyChange(1) + [topology_data]
@@ -52,7 +62,7 @@ ByteArray RemoteCache::sendRequest(const ByteArray& request) {
     ByteArray responseBuffer;
 
     // Read magic byte
-    ByteArray magic = connection_->receive(1);
+    ByteArray magic = conn->receive(1);
 
     // DEBUG: Log magic byte value
     fprintf(stderr, "[DEBUG] Response magic byte: 0x%02X (expected 0xA1)\n", magic[0]);
@@ -66,7 +76,7 @@ ByteArray RemoteCache::sendRequest(const ByteArray& request) {
     // Read vLong message ID (variable length)
     int msgIdBytes = 0;
     while (true) {
-        ByteArray byte = connection_->receive(1);
+        ByteArray byte = conn->receive(1);
         responseBuffer.push_back(byte[0]);
         msgIdBytes++;
         // vLong continues while high bit is set
@@ -76,7 +86,7 @@ ByteArray RemoteCache::sendRequest(const ByteArray& request) {
     }
 
     // Read opcode, status, topology change marker (3 bytes)
-    ByteArray tail = connection_->receive(3);
+    ByteArray tail = conn->receive(3);
     responseBuffer.insert(responseBuffer.end(), tail.begin(), tail.end());
 
     uint8_t topologyMarker = tail[2];  // Last byte of tail
@@ -94,15 +104,80 @@ ByteArray RemoteCache::sendRequest(const ByteArray& request) {
                 static_cast<uint8_t>(clientIntelligence_));
 
         try {
-            // Read topology directly from connection - it knows how to parse vints progressively
-            topology_ = HeaderCodec::readTopologyInfo(connection_.get(), clientIntelligence_);
+            // Variables for hash distribution (only used if HASH_DISTRIBUTION_AWARE)
+            uint8_t hashFunctionVersion = 0;
+            VInt numSegments = 0;
+            std::vector<std::vector<uint8_t>> segmentOwners;
+
+            // Read topology directly from connection
+            topology_.parseTopologyInfo(conn, clientIntelligence_,
+                                       hashFunctionVersion, numSegments, segmentOwners);
 
             fprintf(stderr, "[DEBUG] Topology parsed: ID=%d, servers=%zu\n",
-                    topology_.topologyId, topology_.servers.size());
-            for (size_t i = 0; i < topology_.servers.size(); i++) {
-                fprintf(stderr, "[DEBUG]   Server %zu: %s:%u\n", i,
-                        topology_.servers[i].host.c_str(), topology_.servers[i].port);
+                    topology_.getTopologyId(), topology_.getServers().size());
+
+            // Log servers
+            for (const auto& server : topology_.getServers()) {
+                fprintf(stderr, "[DEBUG]   Server: %s:%u (hashId=%d)\n",
+                        server.host.c_str(), server.port, server.hashId);
             }
+
+            // If HASH_DISTRIBUTION_AWARE, parse hash topology into ConsistentHash
+            if (clientIntelligence_ == ClientIntelligence::HASH_DISTRIBUTION_AWARE &&
+                numSegments > 0) {
+
+                fprintf(stderr, "[DEBUG] Parsing hash topology: %d segments, hashFn=%d\n",
+                        numSegments, hashFunctionVersion);
+
+                // Convert owner indices to hashIds
+                // segmentOwners[segment][ownerIndex] contains indices into topology servers
+                // We need to convert to hashIds for ConsistentHash
+                std::vector<std::vector<int32_t>> segmentOwnerHashIds;
+                segmentOwnerHashIds.resize(segmentOwners.size());
+
+                for (size_t segment = 0; segment < segmentOwners.size(); segment++) {
+                    for (uint8_t ownerIdx : segmentOwners[segment]) {
+                        if (ownerIdx < topology_.getServers().size()) {
+                            int32_t hashId = topology_.getServers()[ownerIdx].hashId;
+                            segmentOwnerHashIds[segment].push_back(hashId);
+                        } else {
+                            fprintf(stderr, "[WARN] Invalid owner index %d for segment %zu\n",
+                                    ownerIdx, segment);
+                        }
+                    }
+                }
+
+                // Create a buffer and encode the hash topology for ConsistentHash::parseHashTopology
+                ByteArray hashTopoBuffer;
+                Codec::writeVInt(hashTopoBuffer, numSegments);
+
+                // Write number of owners (assume all segments have same number of owners)
+                uint8_t numOwners = !segmentOwnerHashIds.empty() && !segmentOwnerHashIds[0].empty()
+                                    ? segmentOwnerHashIds[0].size() : 0;
+                hashTopoBuffer.push_back(numOwners);
+
+                // Write segment ownership (hashIds in big-endian int32)
+                for (const auto& owners : segmentOwnerHashIds) {
+                    for (int32_t hashId : owners) {
+                        // Write as signed int32, big-endian (4 bytes)
+                        hashTopoBuffer.push_back((hashId >> 24) & 0xFF);
+                        hashTopoBuffer.push_back((hashId >> 16) & 0xFF);
+                        hashTopoBuffer.push_back((hashId >> 8) & 0xFF);
+                        hashTopoBuffer.push_back(hashId & 0xFF);
+                    }
+                }
+
+                // Parse into ConsistentHash
+                size_t offset = 0;
+                consistentHash_.parseHashTopology(hashTopoBuffer, offset, topology_);
+
+                fprintf(stderr, "[DEBUG] ConsistentHash initialized: %d segments, %d owners\n",
+                        consistentHash_.getNumSegments(), consistentHash_.getNumOwners());
+
+                // Clean up connections to servers no longer in topology
+                cleanupStaleConnections();
+            }
+
         } catch (const std::exception& e) {
             fprintf(stderr, "[WARN] Failed to parse topology: %s\n", e.what());
         }
@@ -122,7 +197,7 @@ bool RemoteCache::ping() {
     header.cacheName = cacheName_;
     header.flags = 0;
     header.clientIntelligence = clientIntelligence_;
-    header.topologyId = topology_.topologyId;
+    header.topologyId = topology_.getTopologyId();
     header.keyMediaType = 0;
     header.valueMediaType = 0;
     // otherParams empty (count = 0)
@@ -258,7 +333,7 @@ bool RemoteCache::get(const ByteArray& key, ByteArray& value) {
     header.cacheName = cacheName_;
     header.flags = 0;
     header.clientIntelligence = clientIntelligence_;
-    header.topologyId = topology_.topologyId;
+    header.topologyId = topology_.getTopologyId();
     header.keyMediaType = 0;
     header.valueMediaType = 0;
     // otherParams empty (count = 0)
@@ -270,8 +345,8 @@ bool RemoteCache::get(const ByteArray& key, ByteArray& value) {
     // Write key as lp_bytes (vInt length + bytes)
     Codec::writeByteArray(request, key);
 
-    // Send and receive response
-    ByteArray response = sendRequest(request);
+    // Send and receive response (with automatic failover)
+    auto [response, targetConn] = sendRequestWithFailover(request, key);
 
     // Parse response header
     size_t offset = 0;
@@ -305,18 +380,18 @@ bool RemoteCache::get(const ByteArray& key, ByteArray& value) {
     // Need to read the value directly from the socket.
 
     // Read vInt length (same algorithm as Codec::readVInt but from socket)
-    ByteArray firstByte = connection_->receive(1);
+    ByteArray firstByte = targetConn->receive(1);
     VInt valueLength = firstByte[0] & 0x7F;
 
     for (int shift = 7; (firstByte[0] & 0x80) != 0; shift += 7) {
-        ByteArray nextByte = connection_->receive(1);
+        ByteArray nextByte = targetConn->receive(1);
         valueLength |= static_cast<VInt>(nextByte[0] & 0x7F) << shift;
         firstByte[0] = nextByte[0];  // Update for continuation check
     }
 
     // Read value bytes
     if (valueLength > 0) {
-        value = connection_->receive(valueLength);
+        value = targetConn->receive(valueLength);
     } else {
         value.clear();
     }
@@ -335,7 +410,7 @@ bool RemoteCache::put(const ByteArray& key, const ByteArray& value,
     header.cacheName = cacheName_;
     header.flags = 0;
     header.clientIntelligence = clientIntelligence_;
-    header.topologyId = topology_.topologyId;
+    header.topologyId = topology_.getTopologyId();
     header.keyMediaType = 0;
     header.valueMediaType = 0;
     // otherParams empty (count = 0)
@@ -380,8 +455,8 @@ bool RemoteCache::put(const ByteArray& key, const ByteArray& value,
     // Write value as lp_bytes (vInt length + bytes)
     Codec::writeByteArray(request, value);
 
-    // Send and receive response
-    ByteArray response = sendRequest(request);
+    // Send and receive response (with automatic failover)
+    auto [response, targetConn] = sendRequestWithFailover(request, key);
 
     // Parse response header
     size_t offset = 0;
@@ -431,7 +506,7 @@ bool RemoteCache::remove(const ByteArray& key, ByteArray* previousValue) {
     header.cacheName = cacheName_;
     header.flags = 0;
     header.clientIntelligence = clientIntelligence_;
-    header.topologyId = topology_.topologyId;
+    header.topologyId = topology_.getTopologyId();
     header.keyMediaType = 0;
     header.valueMediaType = 0;
     // otherParams empty (count = 0)
@@ -443,8 +518,8 @@ bool RemoteCache::remove(const ByteArray& key, ByteArray* previousValue) {
     // Write key as lp_bytes (vInt length + bytes)
     Codec::writeByteArray(request, key);
 
-    // Send and receive response
-    ByteArray response = sendRequest(request);
+    // Send and receive response (with automatic failover)
+    auto [response, targetConn] = sendRequestWithFailover(request, key);
 
     // Parse response header
     size_t offset = 0;
@@ -486,11 +561,11 @@ bool RemoteCache::remove(const ByteArray& key, ByteArray* previousValue) {
     // Read previous value from response body if status indicates it's present
     if (hasPreviousValue) {
         // Read vInt length (same algorithm as GET)
-        ByteArray firstByte = connection_->receive(1);
+        ByteArray firstByte = targetConn->receive(1);
         VInt valueLength = firstByte[0] & 0x7F;
 
         for (int shift = 7; (firstByte[0] & 0x80) != 0; shift += 7) {
-            ByteArray nextByte = connection_->receive(1);
+            ByteArray nextByte = targetConn->receive(1);
             valueLength |= static_cast<VInt>(nextByte[0] & 0x7F) << shift;
             firstByte[0] = nextByte[0];  // Update for continuation check
         }
@@ -498,14 +573,14 @@ bool RemoteCache::remove(const ByteArray& key, ByteArray* previousValue) {
         // Read previous value bytes
         if (previousValue) {
             if (valueLength > 0) {
-                *previousValue = connection_->receive(valueLength);
+                *previousValue = targetConn->receive(valueLength);
             } else {
                 previousValue->clear();
             }
         } else {
             // Discard the value if caller doesn't want it
             if (valueLength > 0) {
-                connection_->receive(valueLength);
+                targetConn->receive(valueLength);
             }
         }
     } else {
@@ -516,6 +591,189 @@ bool RemoteCache::remove(const ByteArray& key, ByteArray* previousValue) {
     }
 
     return true;  // Key existed and was removed
+}
+
+Connection* RemoteCache::selectServerForKey(const ByteArray& key) {
+    // If hash-aware routing is enabled and hash topology is available
+    if (clientIntelligence_ == ClientIntelligence::HASH_DISTRIBUTION_AWARE &&
+        consistentHash_.hasHashTopology()) {
+
+        int segment = consistentHash_.getSegment(key);
+
+        // Get all owners (primary + backups) for this key
+        auto owners = consistentHash_.getOwners(key, topology_);
+
+        if (!owners.empty()) {
+            fprintf(stderr, "[DEBUG] Hash-aware routing: key → segment %d → trying %zu owner(s)\n",
+                    segment, owners.size());
+
+            // Try each owner in order (primary first, then backups)
+            for (size_t i = 0; i < owners.size(); i++) {
+                const ServerInfo* owner = owners[i];
+                try {
+                    Connection* conn = getConnectionForServer(*owner);
+                    if (i == 0) {
+                        fprintf(stderr, "[DEBUG] Routing to primary owner: %s:%u\n",
+                                owner->host.c_str(), owner->port);
+                    } else {
+                        fprintf(stderr, "[DEBUG] Failover to backup owner #%zu: %s:%u\n",
+                                i, owner->host.c_str(), owner->port);
+                    }
+                    return conn;
+                } catch (const std::exception& e) {
+                    fprintf(stderr, "[WARN] Failed to connect to owner %s:%u: %s\n",
+                            owner->host.c_str(), owner->port, e.what());
+                    // Continue to next owner
+                }
+            }
+
+            // All owners failed, try any server in topology
+            fprintf(stderr, "[WARN] All owners failed for segment %d, trying any server\n", segment);
+            const auto& servers = topology_.getServers();
+            for (const auto& server : servers) {
+                // Skip servers we already tried as owners
+                bool alreadyTried = false;
+                for (const auto* owner : owners) {
+                    if (server.host == owner->host && server.port == owner->port) {
+                        alreadyTried = true;
+                        break;
+                    }
+                }
+                if (alreadyTried) continue;
+
+                try {
+                    Connection* conn = getConnectionForServer(server);
+                    fprintf(stderr, "[DEBUG] Failover to non-owner server: %s:%u\n",
+                            server.host.c_str(), server.port);
+                    return conn;
+                } catch (const std::exception& e) {
+                    fprintf(stderr, "[WARN] Failed to connect to server %s:%u: %s\n",
+                            server.host.c_str(), server.port, e.what());
+                    // Continue to next server
+                }
+            }
+
+            // No servers available
+            throw std::runtime_error("No servers available in topology");
+        } else {
+            fprintf(stderr, "[WARN] No owners found for key (segment %d), falling back to default connection\n", segment);
+        }
+    }
+
+    // Fallback: use default connection
+    return connection_.get();
+}
+
+std::pair<ByteArray, Connection*> RemoteCache::sendRequestWithFailover(const ByteArray& request, const ByteArray& key) {
+    // If hash-aware routing is enabled
+    if (clientIntelligence_ == ClientIntelligence::HASH_DISTRIBUTION_AWARE &&
+        consistentHash_.hasHashTopology()) {
+
+        int segment = consistentHash_.getSegment(key);
+        auto owners = consistentHash_.getOwners(key, topology_);
+
+        // Try each owner (primary + backups)
+        for (size_t i = 0; i < owners.size(); i++) {
+            const ServerInfo* owner = owners[i];
+            try {
+                Connection* conn = getConnectionForServer(*owner);
+                if (i == 0) {
+                    fprintf(stderr, "[DEBUG] Routing to primary owner: %s:%u (segment %d)\n",
+                            owner->host.c_str(), owner->port, segment);
+                } else {
+                    fprintf(stderr, "[DEBUG] Failover to backup #%zu: %s:%u (segment %d)\n",
+                            i, owner->host.c_str(), owner->port, segment);
+                }
+                ByteArray response = sendRequestToConnection(request, conn);
+                return {response, conn};
+            } catch (const std::exception& e) {
+                fprintf(stderr, "[WARN] Request failed to owner %s:%u: %s\n",
+                        owner->host.c_str(), owner->port, e.what());
+                // Continue to next owner
+            }
+        }
+
+        // All owners failed, try any server
+        fprintf(stderr, "[WARN] All owners failed for segment %d, trying any server\n", segment);
+        const auto& servers = topology_.getServers();
+        for (const auto& server : servers) {
+            // Skip servers we already tried
+            bool alreadyTried = false;
+            for (const auto* owner : owners) {
+                if (server.host == owner->host && server.port == owner->port) {
+                    alreadyTried = true;
+                    break;
+                }
+            }
+            if (alreadyTried) continue;
+
+            try {
+                Connection* conn = getConnectionForServer(server);
+                fprintf(stderr, "[DEBUG] Failover to non-owner: %s:%u\n",
+                        server.host.c_str(), server.port);
+                ByteArray response = sendRequestToConnection(request, conn);
+                return {response, conn};
+            } catch (const std::exception& e) {
+                fprintf(stderr, "[WARN] Request failed to server %s:%u: %s\n",
+                        server.host.c_str(), server.port, e.what());
+                // Continue to next server
+            }
+        }
+
+        throw std::runtime_error("No servers available - all failed");
+    }
+
+    // Fallback: use default connection (no hash-aware routing)
+    ByteArray response = sendRequestToConnection(request, connection_.get());
+    return {response, connection_.get()};
+}
+
+Connection* RemoteCache::getConnectionForServer(const ServerInfo& server) {
+    // Create connection pool key
+    std::string poolKey = server.host + ":" + std::to_string(server.port);
+
+    // Check if connection already exists in pool
+    auto it = connectionPool_.find(poolKey);
+    if (it != connectionPool_.end()) {
+        // Connection exists, check if it's still connected
+        if (it->second->isConnected()) {
+            return it->second.get();
+        } else {
+            fprintf(stderr, "[DEBUG] Reconnecting to %s\n", poolKey.c_str());
+            it->second->connect();
+            return it->second.get();
+        }
+    }
+
+    // Connection doesn't exist, create new one
+    fprintf(stderr, "[DEBUG] Creating new connection to %s\n", poolKey.c_str());
+    auto newConnection = std::make_unique<Connection>(server.host, server.port);
+    newConnection->connect();
+
+    Connection* connPtr = newConnection.get();
+    connectionPool_[poolKey] = std::move(newConnection);
+
+    return connPtr;
+}
+
+void RemoteCache::cleanupStaleConnections() {
+    // Build set of current servers
+    std::set<std::string> currentServers;
+    for (const auto& server : topology_.getServers()) {
+        std::string key = server.host + ":" + std::to_string(server.port);
+        currentServers.insert(key);
+    }
+
+    // Remove connections not in current topology
+    auto it = connectionPool_.begin();
+    while (it != connectionPool_.end()) {
+        if (currentServers.find(it->first) == currentServers.end()) {
+            fprintf(stderr, "[DEBUG] Removing stale connection to %s\n", it->first.c_str());
+            it = connectionPool_.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 } // namespace hotrod

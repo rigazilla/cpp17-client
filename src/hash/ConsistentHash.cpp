@@ -63,9 +63,16 @@ int ConsistentHash::getSegment(const ByteArray& key) const {
     // Hash the key using MurmurHash3 with seed=9001
     int32_t hash = MurmurHash3::hash32(key, 9001);
 
-    // Mask off sign bit and modulo to get segment
-    // Java: (hash & 0x7FFFFFFF) % numSegments
-    int segment = (hash & 0x7FFFFFFF) % numSegments_;
+    // Normalize hash (mask off sign bit to make positive)
+    int32_t normalizedHash = hash & 0x7FFFFFFF;
+
+    // Java uses DIVISION, not modulo:
+    // segmentSize = ceil((2^31) / numSegments)
+    // segment = normalizedHash / segmentSize
+    //
+    // This is equivalent to: segment = (normalizedHash * numSegments) / 2^31
+    // Using 64-bit to avoid overflow
+    int segment = (static_cast<int64_t>(normalizedHash) * numSegments_) / (1L << 31);
 
     return segment;
 }
