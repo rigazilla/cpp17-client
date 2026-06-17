@@ -4,13 +4,13 @@ A cross-platform C++17 implementation of the Infinispan Hot Rod protocol client.
 
 ## Status
 
-🎉 **Full CRUD Support Achieved!** - Following [hotrod-foundry](../hotrod-foundry) implementation roadmap.
+🎉 **Hash-Aware Routing Complete!** - Smart client with automatic failover.
 
-**Current Progress**: Steps 0-9 COMPLETE ✅ - Full CRUD operations working! See [PROGRESS.md](PROGRESS.md)
+**Current Progress**: Steps 0-12 COMPLETE ✅ - Full CRUD + Hash-Aware Routing! See [PROGRESS.md](PROGRESS.md)
 
 **Test Results**:
-- Unit Tests: **150/150 passing** ✅
-- Integration Tests: **29/29 passing** ✅ (against live Infinispan 16.0 server)
+- Unit Tests: **155/155 passing** ✅
+- Integration Tests: **38/38 passing** ✅ (against live Infinispan 16.2 server)
 
 ## Features
 
@@ -18,25 +18,33 @@ A cross-platform C++17 implementation of the Infinispan Hot Rod protocol client.
 - ✅ **Cross-platform support** (Linux + Windows)
 - ✅ **Wire format primitives** (vInt, vLong, strings, byte arrays)
 - ✅ **Protocol 4.0 headers** (complete spec with all conditional fields)
-- ✅ **SCRAM-SHA-256 authentication** (RFC 5802 compliant)
-- ✅ **Topology awareness** (cluster failover, load balancing)
-- ✅ **Consistent hashing** (MurmurHash3, smart routing to primary owner)
+- ✅ **Client Intelligence 0x03** (HASH_DISTRIBUTION_AWARE)
+- ✅ **Hash-aware routing** (keys route directly to primary owner)
+- ✅ **Automatic failover** (primary → backup owners → any server)
+- ✅ **Topology awareness** (cluster rebalancing, updates)
+- ✅ **Consistent hashing** (MurmurHash3 x64_32, segment-based routing)
+- ✅ **Connection pooling** (one connection per server)
 - ✅ **PING operation** (server connectivity check)
-- ✅ **GET operation** (read from cache)
+- ✅ **GET operation** (read from cache with failover)
 - ✅ **PUT operation** (write to cache with lifespan/maxIdle)
 - ✅ **REMOVE operation** (delete from cache)
-- ✅ **Integration test framework** (GoogleTest + bash scripts + Docker)
+- ✅ **Integration test framework** (GoogleTest + Docker + multi-node clusters)
 
-### Full CRUD Support
+### Full CRUD with Smart Routing
 ```cpp
-// CREATE/UPDATE
+// Connect with hash-aware routing
+RemoteCache cache("localhost", 11222, "my-cache");
+cache.setClientIntelligence(ClientIntelligence::HASH_DISTRIBUTION_AWARE);
+cache.connect();
+
+// CREATE/UPDATE - routes to primary owner
 cache.put(key, value, lifespan, maxIdle);
 
-// READ
+// READ - automatic failover to backup if primary fails
 ByteArray value;
 bool found = cache.get(key, value);
 
-// DELETE
+// DELETE - with automatic failover
 ByteArray previousValue;
 bool removed = cache.remove(key, &previousValue);
 
@@ -44,12 +52,10 @@ bool removed = cache.remove(key, &previousValue);
 bool alive = cache.ping();
 ```
 
-### In Progress
+### Future
 - GET_WITH_METADATA (Step 10)
 - Version-based operations (REPLACE_IF_UNMODIFIED)
-
-### Future
-- Connection pooling
+- SCRAM-SHA-256 authentication (Step 11)
 - TLS/SSL support
 - Async operations
 - Bulk operations
@@ -66,8 +72,8 @@ bool alive = cache.ping();
 - **Google Test** (for testing)
 
 ### Runtime Requirements
-- Infinispan Server 15.0+ or 16.0+
-- Docker (for integration tests)
+- Infinispan Server 16.0+ (tested with 16.2)
+- Docker (for integration tests and quickstart example)
 
 ## Building
 
@@ -119,7 +125,7 @@ ctest -C Release --output-on-failure
 
 ## Testing
 
-### Unit Tests (150 tests)
+### Unit Tests (155 tests)
 ```bash
 cd build
 ./unit_tests
@@ -128,7 +134,7 @@ cd build
 ctest -R UnitTests --output-on-failure
 ```
 
-### Integration Tests (29 tests)
+### Integration Tests (38 tests)
 Requires Docker to run Infinispan server:
 ```bash
 cd build
@@ -138,12 +144,14 @@ cd build
 ./get_integration_tests  
 ./put_integration_tests
 ./remove_integration_tests
+./topology_integration_tests         # Multi-node cluster tests
+./hash_aware_routing_integration_tests  # Smart routing tests
 
-# Or via CTest
-ctest -R IntegrationTests --output-on-failure
+# Or run all via CTest
+ctest --output-on-failure
 ```
 
-**Note**: Integration tests use GoogleTest global environment to manage Infinispan server lifecycle. The server is started once before all tests and stopped after completion.
+**Note**: Integration tests use Docker Compose to manage multi-node Infinispan clusters (up to 4 nodes). Tests verify failover, rebalancing, and hash-aware routing.
 
 ## Project Structure
 
@@ -158,26 +166,28 @@ cpp17-client/
 │   ├── Codec.h                  # Wire format primitives
 │   ├── HeaderCodec.h            # Protocol 4.0 headers
 │   ├── Connection.h             # TCP connection
-│   ├── RemoteCache.h            # High-level API
-│   ├── SCRAM.h                  # Authentication
+│   ├── RemoteCache.h            # High-level API (with hash-aware routing)
 │   ├── TopologyInfo.h           # Cluster tracking
-│   └── ConsistentHash.h         # Smart routing
+│   ├── ConsistentHash.h         # Smart routing
+│   └── MurmurHash3.h            # Hash function
 ├── src/                         # Implementation
 │   ├── codec/                   # Encoding/decoding
 │   ├── transport/               # Network I/O
-│   ├── auth/                    # SCRAM-SHA-256
 │   ├── topology/                # Cluster tracking
 │   ├── hash/                    # MurmurHash3 + consistent hashing
-│   └── operations/              # Hot Rod operations (PING, GET, PUT, REMOVE)
+│   └── operations/              # Hot Rod operations (with failover)
 ├── tests/                       # Test suite
-│   ├── unit/                    # 150 unit tests
-│   └── integration/             # 29 integration tests
-├── scripts/                     # Integration test helpers
-│   ├── start_infinispan_noauth.sh
-│   └── stop_infinispan.sh
-├── test-configs/                # Server configurations
-│   └── infinispan-noauth.xml   # Anonymous mode config
-└── .github/workflows/           # CI/CD
+│   ├── unit/                    # 155 unit tests
+│   └── integration/             # 38 integration tests (multi-node clusters)
+├── examples/                    # Usage examples
+│   └── quickstart/              # Simple GET/PUT/REMOVE example
+├── scripts/                     # Test infrastructure
+│   ├── start_cluster.sh         # Start multi-node cluster
+│   ├── add_cluster_node.sh      # Add node dynamically
+│   └── remove_cluster_node.sh   # Remove node for failover tests
+└── test-configs/                # Server configurations
+    ├── docker-compose-cluster.yml  # Multi-node setup
+    └── infinispan-cluster.xml      # No-auth config
 ```
 
 ## Development
@@ -217,46 +227,48 @@ Following the hotrod-foundry porting guidelines:
 - Validate against test vectors
 - Ensure cross-platform compatibility
 
-## Quick Start Example
+## Quick Start
 
-```cpp
-#include "hotrod/RemoteCache.h"
-#include <iostream>
+See the complete working example in [`examples/quickstart/`](examples/quickstart/):
 
-using namespace hotrod;
-
-int main() {
-    // Connect to Infinispan server
-    RemoteCache cache("localhost", 11222);
-    cache.connect();
-
-    // PUT key-value
-    ByteArray key = {'m', 'y', 'k', 'e', 'y'};
-    ByteArray value = {'m', 'y', 'v', 'a', 'l', 'u', 'e'};
-    cache.put(key, value);
-
-    // GET value
-    ByteArray retrieved;
-    if (cache.get(key, retrieved)) {
-        std::string valueStr(retrieved.begin(), retrieved.end());
-        std::cout << "Value: " << valueStr << std::endl;
-    }
-
-    // REMOVE key
-    ByteArray previousValue;
-    if (cache.remove(key, &previousValue)) {
-        std::cout << "Key removed" << std::endl;
-    }
-
-    // Check server connectivity
-    if (cache.ping()) {
-        std::cout << "Server is alive" << std::endl;
-    }
-
-    cache.disconnect();
-    return 0;
-}
+```bash
+cd examples/quickstart
+./start-server.sh        # Start Infinispan 16.2
+mkdir build && cd build
+cmake .. && make
+./quickstart             # Run the example
 ```
+
+Example output:
+```
+=== Hot Rod C++ Client Quickstart ===
+Connecting to Infinispan server...
+Connected successfully!
+
+--- PUT Operations ---
+PUT: greeting = Hello, Infinispan!
+PUT: language = C++17
+PUT: version = 1.0.0
+
+--- GET Operations ---
+GET: greeting = Hello, Infinispan!
+GET: language = C++17
+GET: version = 1.0.0
+
+--- REMOVE Operations ---
+REMOVE: language deleted successfully
+
+=== Quickstart Complete ===
+```
+
+The quickstart demonstrates:
+- Connecting to Infinispan
+- PUT operations (storing key-value pairs)
+- GET operations (reading values)
+- REMOVE operations (deleting entries)
+- Clean disconnect
+
+See [`examples/quickstart/README.md`](examples/quickstart/README.md) for full documentation.
 
 ## Implementation Milestones
 
@@ -265,10 +277,12 @@ int main() {
 - ✅ **v0.3.0** (2026-06-12): GET operation complete (Step 7)
 - ✅ **v0.4.0** (2026-06-12): PUT operation complete (Step 8)
 - ✅ **v0.5.0** (2026-06-12): REMOVE operation complete (Step 9) - **Full CRUD!**
-- 🎯 **v0.6.0** (upcoming): Metadata operations (Step 10)
+- ✅ **v0.6.0** (2026-06-17): Topology awareness (Step 12)
+- ✅ **v0.7.0** (2026-06-17): Hash-aware routing with failover - **Smart Client!**
+- 🎯 **v0.8.0** (upcoming): Metadata operations (Step 10)
 
 ---
 
 **Maintained by**: rigazilla  
 **Status**: Active development  
-**Current Step**: 10 (Metadata Operations) - **Full CRUD complete!** (Steps 0-9) ✅
+**Current Step**: Hash-aware routing complete! Smart client with automatic failover. ✅
