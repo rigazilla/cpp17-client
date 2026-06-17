@@ -2,80 +2,64 @@
 
 A cross-platform C++17 implementation of the Infinispan Hot Rod protocol client.
 
-## Status
-
 🎉 **Hash-Aware Routing Complete!** - Smart client with automatic failover.
 
-**Current Progress**: Steps 0-12 COMPLETE ✅ - Full CRUD + Hash-Aware Routing! See [PROGRESS.md](PROGRESS.md)
+## Quick Start
 
-**Test Results**:
-- Unit Tests: **155/155 passing** ✅
-- Integration Tests: **38/38 passing** ✅ (against live Infinispan 16.2 server)
+See the complete working example in [`examples/quickstart/`](examples/quickstart/):
 
-## Features
-
-### Implemented ✅
-- ✅ **Cross-platform support** (Linux + Windows)
-- ✅ **Wire format primitives** (vInt, vLong, strings, byte arrays)
-- ✅ **Protocol 4.0 headers** (complete spec with all conditional fields)
-- ✅ **Client Intelligence 0x03** (HASH_DISTRIBUTION_AWARE)
-- ✅ **Hash-aware routing** (keys route directly to primary owner)
-- ✅ **Automatic failover** (primary → backup owners → any server)
-- ✅ **Topology awareness** (cluster rebalancing, updates)
-- ✅ **Consistent hashing** (MurmurHash3 x64_32, segment-based routing)
-- ✅ **Connection pooling** (one connection per server)
-- ✅ **PING operation** (server connectivity check)
-- ✅ **GET operation** (read from cache with failover)
-- ✅ **PUT operation** (write to cache with lifespan/maxIdle)
-- ✅ **REMOVE operation** (delete from cache)
-- ✅ **Integration test framework** (GoogleTest + Docker + multi-node clusters)
-
-### Full CRUD with Smart Routing
-```cpp
-// Connect with hash-aware routing
-RemoteCache cache("localhost", 11222, "my-cache");
-cache.setClientIntelligence(ClientIntelligence::HASH_DISTRIBUTION_AWARE);
-cache.connect();
-
-// CREATE/UPDATE - routes to primary owner
-cache.put(key, value, lifespan, maxIdle);
-
-// READ - automatic failover to backup if primary fails
-ByteArray value;
-bool found = cache.get(key, value);
-
-// DELETE - with automatic failover
-ByteArray previousValue;
-bool removed = cache.remove(key, &previousValue);
-
-// PING
-bool alive = cache.ping();
+```bash
+cd examples/quickstart
+./start-server.sh        # Start Infinispan 16.2
+mkdir build && cd build
+cmake .. && make
+./quickstart             # Run the example
 ```
 
-### Future
-- GET_WITH_METADATA (Step 10)
-- Version-based operations (REPLACE_IF_UNMODIFIED)
-- SCRAM-SHA-256 authentication (Step 11)
-- TLS/SSL support
-- Async operations
-- Bulk operations
+Example output:
+```
+=== Hot Rod C++ Client Quickstart ===
+Connecting to Infinispan server...
+Connected successfully!
 
-## Requirements
+--- PUT Operations ---
+PUT: greeting = Hello, Infinispan!
+PUT: language = C++17
+PUT: version = 1.0.0
 
-### Build Requirements
-- **C++17** compatible compiler:
-  - GCC 7+ (Linux)
-  - Clang 6+ (Linux/macOS)
-  - Visual Studio 2019+ / MSVC 19.20+ (Windows)
+--- GET Operations ---
+GET: greeting = Hello, Infinispan!
+GET: language = C++17
+GET: version = 1.0.0
+
+--- REMOVE Operations ---
+REMOVE: language deleted successfully
+
+=== Quickstart Complete ===
+```
+
+The quickstart demonstrates:
+- Connecting to Infinispan
+- PUT operations (storing key-value pairs)
+- GET operations (reading values)
+- REMOVE operations (deleting entries)
+- Clean disconnect
+
+See [`examples/quickstart/README.md`](examples/quickstart/README.md) for full documentation.
+
+## Building
+
+### Requirements
+
+**Build Requirements**:
+- **C++17** compatible compiler (GCC 7+, Clang 6+, MSVC 19.20+)
 - **CMake** 3.15+
 - **OpenSSL** 1.1.1+ or 3.x
 - **Google Test** (for testing)
 
-### Runtime Requirements
+**Runtime Requirements**:
 - Infinispan Server 16.0+ (tested with 16.2)
 - Docker (for integration tests and quickstart example)
-
-## Building
 
 ### Linux (Fedora/RHEL)
 
@@ -153,6 +137,62 @@ ctest --output-on-failure
 
 **Note**: Integration tests use Docker Compose to manage multi-node Infinispan clusters (up to 4 nodes). Tests verify failover, rebalancing, and hash-aware routing.
 
+## Status
+
+**Current Progress**: Steps 0-12 COMPLETE ✅ - Full CRUD + Hash-Aware Routing! See [PROGRESS.md](PROGRESS.md)
+
+**Test Results**:
+- Unit Tests: **155/155 passing** ✅
+- Integration Tests: **38/38 passing** ✅ (against live Infinispan 16.2 server)
+
+## Features
+
+### Implemented ✅
+- ✅ **Cross-platform support** (Linux + Windows)
+- ✅ **Wire format primitives** (vInt, vLong, strings, byte arrays)
+- ✅ **Protocol 4.0 headers** (complete spec with all conditional fields)
+- ✅ **Client Intelligence 0x03** (HASH_DISTRIBUTION_AWARE)
+- ✅ **Hash-aware routing** (keys route directly to primary owner)
+- ✅ **Automatic failover** (primary → backup owners → any server)
+- ✅ **Topology awareness** (cluster rebalancing, updates)
+- ✅ **Consistent hashing** (MurmurHash3 x64_32, segment-based routing)
+- ✅ **Connection pooling** (one connection per server)
+- ✅ **PING operation** (server connectivity check)
+- ✅ **GET operation** (read from cache with failover)
+- ✅ **PUT operation** (write to cache with lifespan/maxIdle)
+- ✅ **REMOVE operation** (delete from cache)
+- ✅ **Integration test framework** (GoogleTest + Docker + multi-node clusters)
+
+### Full CRUD with Smart Routing
+```cpp
+// Connect with hash-aware routing
+RemoteCache cache("localhost", 11222, "my-cache");
+cache.setClientIntelligence(ClientIntelligence::HASH_DISTRIBUTION_AWARE);
+cache.connect();
+
+// CREATE/UPDATE - routes to primary owner
+cache.put(key, value, lifespan, maxIdle);
+
+// READ - automatic failover to backup if primary fails
+ByteArray value;
+bool found = cache.get(key, value);
+
+// DELETE - with automatic failover
+ByteArray previousValue;
+bool removed = cache.remove(key, &previousValue);
+
+// PING
+bool alive = cache.ping();
+```
+
+### Future
+- GET_WITH_METADATA (Step 10)
+- Version-based operations (REPLACE_IF_UNMODIFIED)
+- SCRAM-SHA-256 authentication (Step 11)
+- TLS/SSL support
+- Async operations
+- Bulk operations
+
 ## Project Structure
 
 ```
@@ -226,49 +266,6 @@ Following the hotrod-foundry porting guidelines:
 - Update PROGRESS.md after each step
 - Validate against test vectors
 - Ensure cross-platform compatibility
-
-## Quick Start
-
-See the complete working example in [`examples/quickstart/`](examples/quickstart/):
-
-```bash
-cd examples/quickstart
-./start-server.sh        # Start Infinispan 16.2
-mkdir build && cd build
-cmake .. && make
-./quickstart             # Run the example
-```
-
-Example output:
-```
-=== Hot Rod C++ Client Quickstart ===
-Connecting to Infinispan server...
-Connected successfully!
-
---- PUT Operations ---
-PUT: greeting = Hello, Infinispan!
-PUT: language = C++17
-PUT: version = 1.0.0
-
---- GET Operations ---
-GET: greeting = Hello, Infinispan!
-GET: language = C++17
-GET: version = 1.0.0
-
---- REMOVE Operations ---
-REMOVE: language deleted successfully
-
-=== Quickstart Complete ===
-```
-
-The quickstart demonstrates:
-- Connecting to Infinispan
-- PUT operations (storing key-value pairs)
-- GET operations (reading values)
-- REMOVE operations (deleting entries)
-- Clean disconnect
-
-See [`examples/quickstart/README.md`](examples/quickstart/README.md) for full documentation.
 
 ## Implementation Milestones
 
