@@ -19,8 +19,8 @@ int main() {
 
     try {
         // Connect to Infinispan server running on localhost:11222
-        // Using the default cache (___defaultcache)
-        RemoteCache cache("localhost", 11222);
+        // Using the quickstart cache
+        RemoteCache cache("localhost", 11222, "quickstart-cache");
 
         std::cout << "Connecting to Infinispan server..." << std::endl;
         cache.connect();

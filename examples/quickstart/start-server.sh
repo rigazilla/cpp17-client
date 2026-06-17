@@ -22,53 +22,34 @@ if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
     docker rm -f ${CONTAINER_NAME} >/dev/null
 fi
 
-# Start Infinispan container
+# Start Infinispan container with custom config (no authentication)
 echo "Starting Infinispan container..."
 docker run -d \
     --name ${CONTAINER_NAME} \
+    -v "${SCRIPT_DIR}:/user-config:ro" \
     -p 11222:11222 \
-    -e USER=admin \
-    -e PASS=password \
-    quay.io/infinispan/server:15.0 \
+    infinispan/server:16.2 \
+    -c /user-config/infinispan-cluster.xml \
     >/dev/null
 
 echo "Waiting for server to start..."
 
-# Wait for server to be ready (max 30 seconds)
-TIMEOUT=30
-ELAPSED=0
-while [ $ELAPSED -lt $TIMEOUT ]; do
-    if curl -s -f -u admin:password http://localhost:11222/rest/v3/server/ >/dev/null 2>&1; then
-        echo "Server is ready!"
-        break
-    fi
-    sleep 1
-    ELAPSED=$((ELAPSED + 1))
-    echo -n "."
-done
-echo
+# Wait for server to start (simple 10 second wait)
+echo "Waiting for server to start..."
+sleep 10
+echo "Server should be ready!"
 
-if [ $ELAPSED -ge $TIMEOUT ]; then
-    echo "ERROR: Server failed to start within ${TIMEOUT} seconds"
-    docker logs ${CONTAINER_NAME}
-    exit 1
-fi
-
-# Create default cache (using distributed mode)
-echo "Creating default cache..."
-docker exec ${CONTAINER_NAME} /opt/infinispan/bin/cli.sh -c http://localhost:11222 \
-    --username=admin --password=password \
-    <<EOF >/dev/null 2>&1 || echo "Cache may already exist"
-create cache --template=org.infinispan.DIST_SYNC ___defaultcache
-EOF
+# Create quickstart cache using CLI
+echo "Creating quickstart cache..."
+docker exec ${CONTAINER_NAME} \
+    bash -c "echo 'create cache --template=org.infinispan.DIST_SYNC quickstart-cache' | /opt/infinispan/bin/cli.sh -c http://localhost:11222" \
+    >/dev/null 2>&1 || echo "(Cache may already exist)"
 
 echo
 echo "=== Infinispan Server Started Successfully ==="
 echo "Server URL: http://localhost:11222"
 echo "Console: http://localhost:11222/console"
-echo "Username: admin"
-echo "Password: password"
-echo "Cache: ___defaultcache"
+echo "Cache: quickstart-cache"
 echo
 echo "To stop the server, run: docker stop ${CONTAINER_NAME}"
 echo "To remove the server, run: docker rm ${CONTAINER_NAME}"

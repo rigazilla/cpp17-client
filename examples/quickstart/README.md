@@ -37,12 +37,12 @@ Start a local Infinispan server using Docker:
 ```
 
 This will:
-- Start Infinispan 15.0 in a Docker container
+- Start Infinispan 16.2 in a Docker container
 - Listen on `localhost:11222`
-- Create a distributed cache named `___defaultcache`
-- Set up credentials: `admin/password`
+- Create a distributed cache named `quickstart-cache`
+- No authentication required for quickstart
 
-**Web Console**: http://localhost:11222/console (admin/password)
+**Web Console**: http://localhost:11222/console
 
 ### 3. Build the Quickstart Example
 
