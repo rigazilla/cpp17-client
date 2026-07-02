@@ -39,21 +39,19 @@ TEST(RemoveIntegrationTest, PutRemoveGet) {
     // PUT
     ByteArray key = {'r', 'e', 'm', 'k', 'e', 'y', '1'};
     ByteArray value = {'r', 'e', 'm', 'v', 'a', 'l', '1'};
-    bool putHadPrevious = cache.put(key, value);
-    EXPECT_FALSE(putHadPrevious);
+    auto putHadPrevious = cache.put(key, value).get();
+    EXPECT_FALSE(putHadPrevious.has_value());
 
     // REMOVE
-    ByteArray previousValue;
-    bool removed = cache.remove(key, &previousValue);
-    EXPECT_TRUE(removed);  // Key existed
+    auto prevValue = cache.remove(key,true).get();
+    EXPECT_TRUE(prevValue.has_value());  // Key existed
     // Note: Previous value may or may not be returned depending on server config
     // If server returns it (status 0x03), verify it matches
     // If not (status 0x00), previousValue will be empty
 
     // GET (should not exist)
-    ByteArray retrievedValue;
-    bool found = cache.get(key, retrievedValue);
-    EXPECT_FALSE(found);
+    auto retrievedValue = cache.get(key).get();
+    EXPECT_FALSE(retrievedValue.has_value());  // Key should not exist
 
     cache.disconnect();
 }
@@ -68,11 +66,9 @@ TEST(RemoveIntegrationTest, RemoveNonExistent) {
     cache.connect();
 
     ByteArray key = {'n', 'o', 'e', 'x', 'i', 's', 't'};
-    ByteArray previousValue;
-    bool removed = cache.remove(key, &previousValue);
+    auto prevValue = cache.remove(key).get();
 
-    EXPECT_FALSE(removed);  // Key didn't exist
-    EXPECT_EQ(0, previousValue.size());
+    EXPECT_FALSE(prevValue.has_value());  // Key didn't exist
 
     cache.disconnect();
 }
@@ -93,17 +89,16 @@ TEST(RemoveIntegrationTest, RemoveLargeValue) {
     cache.put(key, value);
 
     // REMOVE
-    ByteArray previousValue;
-    bool removed = cache.remove(key, &previousValue);
+    auto prevValue = cache.remove(key, true).get();
 
-    EXPECT_TRUE(removed);
+    EXPECT_TRUE(prevValue.has_value());  // Key existed
     // Note: Server may or may not return previous value (depends on config)
     // Just verify removal succeeded
     // If previousValue is returned, verify it
-    if (previousValue.size() > 0) {
-        EXPECT_EQ(1000, previousValue.size());
-        EXPECT_EQ('R', previousValue[0]);
-        EXPECT_EQ('R', previousValue[999]);
+    if (prevValue.has_value() && prevValue->value.size() > 0) {
+        EXPECT_EQ(1000, prevValue->value.size());
+        EXPECT_EQ('R', prevValue->value[0]);
+        EXPECT_EQ('R', prevValue->value[999]);
     }
 
     cache.disconnect();
@@ -125,10 +120,9 @@ TEST(RemoveIntegrationTest, RemoveEmptyValue) {
     cache.put(key, value);
 
     // REMOVE
-    ByteArray previousValue;
-    bool removed = cache.remove(key, &previousValue);
+    auto prevValue = cache.remove(key, true).get();
 
-    EXPECT_TRUE(removed);
+    EXPECT_TRUE(prevValue.has_value());
     // Empty value (whether returned or not, size should be 0)
 
     cache.disconnect();
@@ -159,15 +153,14 @@ TEST(RemoveIntegrationTest, MultipleRemoves) {
         std::string keyStr = "rmulti" + std::to_string(i);
         ByteArray key(keyStr.begin(), keyStr.end());
 
-        ByteArray previousValue;
-        bool removed = cache.remove(key, &previousValue);
+        auto prevValue = cache.remove(key, true).get();
 
-        EXPECT_TRUE(removed) << "REMOVE #" << i << " failed";
+        EXPECT_TRUE(prevValue.has_value()) << "REMOVE #" << i << " failed";
 
         // Verify previous value if server returned it
-        if (previousValue.size() > 0) {
+        if (prevValue.has_value() && prevValue->value.size() > 0) {
             std::string expectedValue = "rval" + std::to_string(i);
-            std::string actualValue(previousValue.begin(), previousValue.end());
+            std::string actualValue(prevValue->value.begin(), prevValue->value.end());
             EXPECT_EQ(expectedValue, actualValue) << "Value mismatch for #" << i;
         }
     }
@@ -191,14 +184,13 @@ TEST(RemoveIntegrationTest, RemoveWithoutPreviousValue) {
     cache.put(key, value);
 
     // REMOVE without previous value parameter
-    bool removed = cache.remove(key);
+    auto prevValue = cache.remove(key, true).get();
 
-    EXPECT_TRUE(removed);
+    EXPECT_TRUE(prevValue.has_value());
 
     // Verify key doesn't exist
-    ByteArray retrieved;
-    bool found = cache.get(key, retrieved);
-    EXPECT_FALSE(found);
+    auto retrieved = cache.get(key).get();
+    EXPECT_FALSE(retrieved.has_value());
 
     cache.disconnect();
 }
@@ -227,21 +219,19 @@ TEST(RemoveIntegrationTest, RemoveFromDifferentCaches) {
     cache2.put(key, value2);
 
     // REMOVE from cache1
-    bool removed1 = cache1.remove(key);
-    EXPECT_TRUE(removed1);
+    auto removed1 = cache1.remove(key, true).get();
+    EXPECT_TRUE(removed1.has_value());  // Key existed in cache1
 
     // Verify cache1 doesn't have it
-    ByteArray retrieved1;
-    bool found1 = cache1.get(key, retrieved1);
-    EXPECT_FALSE(found1);
+    auto found1 = cache1.get(key).get();
+    EXPECT_FALSE(found1.has_value());
 
     // Verify cache2 still has it
-    ByteArray retrieved2;
-    bool found2 = cache2.get(key, retrieved2);
-    EXPECT_TRUE(found2);
-    EXPECT_EQ(value2, retrieved2);
+    auto found2 = cache2.get(key).get();
+    EXPECT_TRUE(found2.has_value());
+    EXPECT_EQ(value2, found2.value());
 
-    cache1.disconnect();
+    cache1.disconnect();   
     cache2.disconnect();
 }
 

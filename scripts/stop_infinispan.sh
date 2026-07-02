@@ -10,6 +10,5 @@ if [ -z "$CONTAINER_ID" ]; then
     exit 1
 fi
 
-echo "Stopping Infinispan container: $CONTAINER_ID" >&2
-docker rm -f "$CONTAINER_ID" 2>/dev/null || true
-echo "Container stopped" >&2
+# Stop and remove container (hide progress, show errors)
+docker rm -f "$CONTAINER_ID" >/dev/null || true

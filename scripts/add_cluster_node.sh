@@ -42,13 +42,10 @@ if [ -n "$EXISTING" ]; then
     exit 1
 fi
 
-echo "Adding node $NODE_NUM to cluster $CLUSTER_ID" >&2
-
-# Start the new node (--no-deps to avoid recreating existing nodes)
-docker compose -f "$COMPOSE_FILE" -p "$CLUSTER_ID" up -d --no-deps "$SERVICE"
+# Start the new node (--no-deps to avoid recreating existing nodes, hide progress, show errors)
+docker compose -f "$COMPOSE_FILE" -p "$CLUSTER_ID" up -d --no-deps "$SERVICE" >/dev/null
 
 # Wait for node to be healthy
-echo "Waiting for node $NODE_NUM to be healthy..." >&2
 timeout 60 bash -c "
 while ! docker inspect --format='{{.State.Health.Status}}' $CONTAINER 2>/dev/null | grep -q 'healthy'; do
     sleep 2

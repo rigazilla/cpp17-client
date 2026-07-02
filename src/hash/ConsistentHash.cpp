@@ -56,7 +56,7 @@ void ConsistentHash::parseHashTopology(const ByteArray& buffer, size_t& offset,
 }
 
 int ConsistentHash::getSegment(const ByteArray& key) const {
-    if (numSegments_ == 0) {
+    if (numSegments_ == 0 || segmentOwners_.empty()) {
         return 0;
     }
 
@@ -74,6 +74,11 @@ int ConsistentHash::getSegment(const ByteArray& key) const {
     // Using 64-bit to avoid overflow
     int segment = (static_cast<int64_t>(normalizedHash) * numSegments_) / (1L << 31);
 
+    // Extra safety: ensure segment is valid
+    if (segment < 0 || segment >= static_cast<int>(segmentOwners_.size())) {
+        return 0;
+    }
+
     return segment;
 }
 
@@ -84,6 +89,18 @@ const ServerInfo* ConsistentHash::getPrimaryOwner(const ByteArray& key,
     }
 
     int segment = getSegment(key);
+
+    // Bounds check
+    if (segment < 0 || segment >= static_cast<int>(segmentOwners_.size())) {
+        fprintf(stderr, "[WARN] ConsistentHash::getPrimaryOwner: segment %d out of bounds (size=%zu)\n",
+                segment, segmentOwners_.size());
+        return nullptr;
+    }
+
+    if (segmentOwners_[segment].empty()) {
+        fprintf(stderr, "[WARN] ConsistentHash::getPrimaryOwner: segment %d has no owners\n", segment);
+        return nullptr;
+    }
 
     // Primary owner is the first in the list
     int32_t primaryHashId = segmentOwners_[segment][0];
@@ -101,8 +118,15 @@ std::vector<const ServerInfo*> ConsistentHash::getOwners(const ByteArray& key,
 
     int segment = getSegment(key);
 
+    // Bounds check
+    if (segment < 0 || segment >= static_cast<int>(segmentOwners_.size())) {
+        fprintf(stderr, "[WARN] ConsistentHash::getOwners: segment %d out of bounds (size=%zu)\n",
+                segment, segmentOwners_.size());
+        return owners;
+    }
+
     // Collect all owners for this segment
-    for (int i = 0; i < numOwners_; i++) {
+    for (size_t i = 0; i < segmentOwners_[segment].size(); i++) {
         int32_t hashId = segmentOwners_[segment][i];
         const ServerInfo* server = findServerByHashId(hashId, topology);
         if (server != nullptr) {
@@ -111,6 +135,49 @@ std::vector<const ServerInfo*> ConsistentHash::getOwners(const ByteArray& key,
     }
 
     return owners;
+}
+
+void ConsistentHash::updateFromTopology(const TopologyInfo& topology) {
+    if (!topology.hasHashTopology()) {
+        clear();
+        return;
+    }
+
+    const auto& servers = topology.getServers();
+    const auto& topoSegmentOwners = topology.getSegmentOwners();
+
+    numSegments_ = static_cast<int>(topology.getNumSegments());
+
+    // Validate: segment owners array must match numSegments
+    if (topoSegmentOwners.size() != static_cast<size_t>(numSegments_)) {
+        fprintf(stderr, "[WARN] ConsistentHash: topology has %d segments but segmentOwners has %zu entries, clearing hash topology\n",
+                numSegments_, topoSegmentOwners.size());
+        clear();
+        return;
+    }
+
+    numOwners_ = topoSegmentOwners.empty() ? 0 : static_cast<int>(topoSegmentOwners[0].size());
+
+    // Convert segment owners from server indices (uint8) to hashIds (int32)
+    segmentOwners_.clear();
+    segmentOwners_.resize(numSegments_);
+
+    for (int seg = 0; seg < numSegments_; seg++) {
+        const auto& ownerIndices = topoSegmentOwners[seg];
+        segmentOwners_[seg].resize(ownerIndices.size());
+
+        for (size_t i = 0; i < ownerIndices.size(); i++) {
+            uint8_t serverIndex = ownerIndices[i];
+            if (serverIndex < servers.size()) {
+                segmentOwners_[seg][i] = servers[serverIndex].hashId;
+            } else {
+                fprintf(stderr, "[WARN] ConsistentHash: invalid server index %d in segment %d (only %zu servers), clearing hash topology\n",
+                        serverIndex, seg, servers.size());
+                clear();
+                return;
+            }
+        }
+    }
 }
 
 void ConsistentHash::clear() {

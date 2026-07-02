@@ -148,19 +148,11 @@ public:
             throw std::runtime_error("No cluster running");
         }
 
-        // Run add_cluster_node.sh with debug mode
-        std::string cmd = "bash -x ./scripts/add_cluster_node.sh " + clusterID + " " +
+        // Run add_cluster_node.sh
+        std::string cmd = "bash ./scripts/add_cluster_node.sh " + clusterID + " " +
                          std::to_string(nodeNumber) + " > /tmp/node-add-env.sh 2>&1";
 
-        fprintf(stderr, "[DEBUG] MultiServerTestEnvironment::addNode(%d) - STARTING\n", nodeNumber);
-        fprintf(stderr, "[DEBUG]   Cluster ID: %s\n", clusterID.c_str());
-        fprintf(stderr, "[DEBUG]   Command: %s\n", cmd.c_str());
-        fprintf(stderr, "[DEBUG]   Log file: /tmp/node-add-env.sh\n");
-
         int result = system(cmd.c_str());
-
-        fprintf(stderr, "[DEBUG] MultiServerTestEnvironment::addNode(%d) - FINISHED\n", nodeNumber);
-        fprintf(stderr, "[DEBUG]   Exit code: %d\n", result);
 
         if (result != 0) {
             fprintf(stderr, "[ERROR] Script failed! Showing /tmp/node-add-env.sh:\n");
@@ -172,12 +164,8 @@ public:
         ServerInfo newNode = parseNodeInfo("/tmp/node-add-env.sh", nodeNumber);
 
         // Add to servers vector (ensure proper index)
-        fprintf(stderr, "[DEBUG]   Before update: servers.size()=%zu, numServers=%d\n",
-                servers.size(), numServers);
-
         if (nodeNumber - 1 >= static_cast<int>(servers.size())) {
             servers.resize(nodeNumber);
-            fprintf(stderr, "[DEBUG]   Resized servers vector to %d\n", nodeNumber);
         }
         servers[nodeNumber - 1] = newNode;
 
@@ -188,8 +176,6 @@ public:
                 numServers++;
             }
         }
-        fprintf(stderr, "[DEBUG]   After update: servers.size()=%zu, numServers=%d\n",
-                servers.size(), numServers);
     }
 
     /**
@@ -238,28 +224,19 @@ public:
             throw std::runtime_error("No cluster running");
         }
 
-        std::string cmd = "bash -x ./scripts/wait_for_cluster_size.sh " + clusterID + " " +
+        std::string cmd = "bash ./scripts/wait_for_cluster_size.sh " + clusterID + " " +
                          std::to_string(expectedSize) + " 2>&1";
-
-        fprintf(stderr, "[DEBUG] MultiServerTestEnvironment::waitForClusterSize(%d) - STARTING\n", expectedSize);
-        fprintf(stderr, "[DEBUG]   Timeout: %d seconds\n", timeoutSeconds);
-        fprintf(stderr, "[DEBUG]   Command: %s\n", cmd.c_str());
 
         // Set timeout
         std::string timeoutCmd = "timeout " + std::to_string(timeoutSeconds) + " " + cmd;
 
         int result = system(timeoutCmd.c_str());
 
-        fprintf(stderr, "[DEBUG] MultiServerTestEnvironment::waitForClusterSize(%d) - FINISHED\n", expectedSize);
-        fprintf(stderr, "[DEBUG]   Exit code: %d\n", result);
-
         if (result != 0) {
             fprintf(stderr, "[ERROR] Timeout or failure waiting for cluster size %d\n", expectedSize);
             throw std::runtime_error("Timeout waiting for cluster size " +
                                    std::to_string(expectedSize));
         }
-
-        fprintf(stderr, "[DEBUG] Cluster reached size %d successfully!\n", expectedSize);
     }
 
     /**

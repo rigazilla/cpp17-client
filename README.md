@@ -157,32 +157,46 @@ ctest --output-on-failure
 - ✅ **Topology awareness** (cluster rebalancing, updates)
 - ✅ **Consistent hashing** (MurmurHash3 x64_32, segment-based routing)
 - ✅ **Connection pooling** (one connection per server)
+- ✅ **Multiplexed connections** (concurrent async operations on single connection per server)
+- ✅ **Async operations** (all operations return `std::future` for non-blocking execution)
 - ✅ **PING operation** (server connectivity check)
 - ✅ **GET operation** (read from cache with failover)
 - ✅ **PUT operation** (write to cache with lifespan/maxIdle)
 - ✅ **REMOVE operation** (delete from cache)
 - ✅ **Integration test framework** (GoogleTest + Docker + multi-node clusters)
 
-### Full CRUD with Smart Routing
+### Full CRUD with Smart Routing and Async Operations
 ```cpp
 // Connect with hash-aware routing
 RemoteCache cache("localhost", 11222, "my-cache");
 cache.setClientIntelligence(ClientIntelligence::HASH_DISTRIBUTION_AWARE);
 cache.connect();
 
+// All operations are async (return std::future) and can run concurrently
+// Multiple operations share a single multiplexed connection per server
+
 // CREATE/UPDATE - routes to primary owner
-cache.put(key, value, lifespan, maxIdle);
+auto putFuture = cache.put(key, value, lifespan, maxIdle);
 
 // READ - automatic failover to backup if primary fails
-ByteArray value;
-bool found = cache.get(key, value);
+auto getFuture = cache.get(key);
 
 // DELETE - with automatic failover
-ByteArray previousValue;
-bool removed = cache.remove(key, &previousValue);
+auto removeFuture = cache.remove(key);
 
 // PING
-bool alive = cache.ping();
+auto pingFuture = cache.ping();
+
+// Wait for results when needed
+auto result = getFuture.get();  // blocks until complete
+if (result.has_value()) {
+    ByteArray value = result.value();
+}
+
+// Or fire-and-forget for max throughput
+for (int i = 0; i < 1000; i++) {
+    cache.put(keys[i], values[i]);  // returns immediately, executes concurrently
+}
 ```
 
 ### Future
@@ -190,7 +204,6 @@ bool alive = cache.ping();
 - Version-based operations (REPLACE_IF_UNMODIFIED)
 - SCRAM-SHA-256 authentication (Step 11)
 - TLS/SSL support
-- Async operations
 - Bulk operations
 
 ## Project Structure

@@ -38,7 +38,7 @@ void putViaHotRod(const std::string& cacheName, const std::string& key, const st
 
     ByteArray keyBytes(key.begin(), key.end());
     ByteArray valueBytes(value.begin(), value.end());
-    cache.put(keyBytes, valueBytes);
+    cache.put(keyBytes, valueBytes).get();  // Async API: call .get() to block
 
     cache.disconnect();
 }
@@ -58,13 +58,12 @@ TEST(GetIntegrationTest, GetExistingKey) {
     cache.connect();
 
     ByteArray key = {'k', 'e', 'y', '1'};
-    ByteArray value;
-    bool found = cache.get(key, value);
+    auto value = cache.get(key).get();
 
-    EXPECT_TRUE(found);
-    ASSERT_EQ(6, value.size());
+    ASSERT_TRUE(value.has_value());
+    ASSERT_EQ(6, value->size());
 
-    std::string valueStr(value.begin(), value.end());
+    std::string valueStr(value->begin(), value->end());
     EXPECT_EQ("value1", valueStr);
 
     cache.disconnect();
@@ -83,11 +82,9 @@ TEST(GetIntegrationTest, GetNonExistentKey) {
     cache.connect();
 
     ByteArray key = {'n', 'o', 't', 'f', 'o', 'u', 'n', 'd'};
-    ByteArray value;
-    bool found = cache.get(key, value);
+    auto value = cache.get(key).get();
 
-    EXPECT_FALSE(found);
-    EXPECT_EQ(0, value.size());
+    EXPECT_FALSE(value.has_value());
 
     cache.disconnect();
 
@@ -113,11 +110,10 @@ TEST(GetIntegrationTest, GetFromDifferentCache) {
     cache1.connect();
 
     ByteArray key = {'s', 'h', 'a', 'r', 'e', 'd', 'k', 'e', 'y'};
-    ByteArray value1;
-    bool found1 = cache1.get(key, value1);
+    auto value1 = cache1.get(key).get();
 
-    EXPECT_TRUE(found1);
-    std::string str1(value1.begin(), value1.end());
+    ASSERT_TRUE(value1.has_value());
+    std::string str1(value1->begin(), value1->end());
     EXPECT_EQ("fromcache1", str1);
 
     cache1.disconnect();
@@ -128,11 +124,10 @@ TEST(GetIntegrationTest, GetFromDifferentCache) {
                        "cache2");
     cache2.connect();
 
-    ByteArray value2;
-    bool found2 = cache2.get(key, value2);
+    auto value2 = cache2.get(key).get();
 
-    EXPECT_TRUE(found2);
-    std::string str2(value2.begin(), value2.end());
+    ASSERT_TRUE(value2.has_value());
+    std::string str2(value2->begin(), value2->end());
     EXPECT_EQ("fromcache2", str2);
 
     cache2.disconnect();
@@ -155,21 +150,21 @@ TEST(GetIntegrationTest, MultipleGetsOnSameConnection) {
 
     // GET key1
     ByteArray key1 = {'m', 'u', 'l', 't', 'i', '1'};
-    ByteArray value1;
-    EXPECT_TRUE(cache.get(key1, value1));
-    EXPECT_EQ("val1", std::string(value1.begin(), value1.end()));
+    auto value1 = cache.get(key1).get();
+    ASSERT_TRUE(value1.has_value());
+    EXPECT_EQ("val1", std::string(value1->begin(), value1->end()));
 
     // GET key2
     ByteArray key2 = {'m', 'u', 'l', 't', 'i', '2'};
-    ByteArray value2;
-    EXPECT_TRUE(cache.get(key2, value2));
-    EXPECT_EQ("val2", std::string(value2.begin(), value2.end()));
+    auto value2 = cache.get(key2).get();
+    ASSERT_TRUE(value2.has_value());
+    EXPECT_EQ("val2", std::string(value2->begin(), value2->end()));
 
     // GET key3
     ByteArray key3 = {'m', 'u', 'l', 't', 'i', '3'};
-    ByteArray value3;
-    EXPECT_TRUE(cache.get(key3, value3));
-    EXPECT_EQ("val3", std::string(value3.begin(), value3.end()));
+    auto value3 = cache.get(key3).get();
+    ASSERT_TRUE(value3.has_value());
+    EXPECT_EQ("val3", std::string(value3->begin(), value3->end()));
 
     cache.disconnect();
 
@@ -191,11 +186,10 @@ TEST(GetIntegrationTest, GetWithLargeKey) {
                       "testcache");
     cache.connect();
 
-    ByteArray value;
-    bool found = cache.get(largeKey, value);
+    auto value = cache.get(largeKey).get();
 
-    EXPECT_TRUE(found);
-    EXPECT_EQ("largeKeyValue", std::string(value.begin(), value.end()));
+    ASSERT_TRUE(value.has_value());
+    EXPECT_EQ("largeKeyValue", std::string(value->begin(), value->end()));
 
     cache.disconnect();
 
@@ -216,13 +210,12 @@ TEST(GetIntegrationTest, GetWithLargeValue) {
     cache.connect();
 
     ByteArray key = {'b', 'i', 'g', 'v', 'a', 'l'};
-    ByteArray value;
-    bool found = cache.get(key, value);
+    auto value = cache.get(key).get();
 
-    EXPECT_TRUE(found);
-    EXPECT_EQ(1000, value.size());
-    EXPECT_EQ('Y', value[0]);
-    EXPECT_EQ('Y', value[999]);
+    ASSERT_TRUE(value.has_value());
+    EXPECT_EQ(1000, value->size());
+    EXPECT_EQ('Y', (*value)[0]);
+    EXPECT_EQ('Y', (*value)[999]);
 
     cache.disconnect();
 
@@ -241,11 +234,10 @@ TEST(GetIntegrationTest, GetWithEmptyValue) {
     cache.connect();
 
     ByteArray key = {'e', 'm', 'p', 't', 'y', 'v', 'a', 'l'};
-    ByteArray value;
-    bool found = cache.get(key, value);
+    auto value = cache.get(key).get();
 
-    EXPECT_TRUE(found);
-    EXPECT_EQ(0, value.size());
+    ASSERT_TRUE(value.has_value());
+    EXPECT_EQ(0, value->size());
 
     cache.disconnect();
 
@@ -261,10 +253,9 @@ TEST(GetIntegrationTest, GetAfterDisconnect) {
     cache.disconnect();
 
     ByteArray key = {'t', 'e', 's', 't'};
-    ByteArray value;
 
     EXPECT_THROW({
-        cache.get(key, value);
+        cache.get(key).get();
     }, std::runtime_error);
 }
 

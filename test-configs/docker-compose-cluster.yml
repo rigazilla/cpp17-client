@@ -1,5 +1,3 @@
-version: '3.8'
-
 # Multi-node Infinispan cluster for topology integration tests
 # Usage:
 #   Start all 4 nodes: docker-compose -f docker-compose-cluster.yml up -d

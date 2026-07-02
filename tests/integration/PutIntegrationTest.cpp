@@ -41,17 +41,16 @@ TEST(PutIntegrationTest, PutAndGetSimple) {
     // PUT
     ByteArray key = {'p', 'u', 't', 'k', 'e', 'y', '1'};
     ByteArray value = {'p', 'u', 't', 'v', 'a', 'l', '1'};
-    bool hadPrevious = cache.put(key, value);
+    auto prevValue = cache.put(key, value).get();
 
-    EXPECT_FALSE(hadPrevious);  // First PUT, no previous value
+    EXPECT_FALSE(prevValue.has_value());  // First PUT, no previous value
 
     // GET to verify
-    ByteArray retrievedValue;
-    bool found = cache.get(key, retrievedValue);
+    auto retrievedValue = cache.get(key).get();
 
-    EXPECT_TRUE(found);
-    EXPECT_EQ(value.size(), retrievedValue.size());
-    EXPECT_EQ(value, retrievedValue);
+    ASSERT_TRUE(retrievedValue.has_value());
+    EXPECT_EQ(value.size(), retrievedValue->size());
+    EXPECT_EQ(value, *retrievedValue);
 
     cache.disconnect();
 }
@@ -70,20 +69,19 @@ TEST(PutIntegrationTest, PutUpdateExisting) {
     ByteArray value2 = {'v', 'a', 'l', '2'};
 
     // First PUT
-    bool hadPrevious1 = cache.put(key, value1);
-    EXPECT_FALSE(hadPrevious1);
+    auto prevValue1 = cache.put(key, value1).get();
+    EXPECT_FALSE(prevValue1.has_value());
 
     // Second PUT (update)
-    bool hadPrevious2 = cache.put(key, value2);
-    (void)hadPrevious2;  // Note: Previous value detection not fully implemented yet
-    // EXPECT_TRUE(hadPrevious2);
+    auto prevValue2 = cache.put(key, value2).get();
+    // Note: Previous value detection not fully implemented yet
+    // EXPECT_TRUE(prevValue2.has_value());
 
     // GET to verify update
-    ByteArray retrievedValue;
-    bool found = cache.get(key, retrievedValue);
+    auto retrievedValue = cache.get(key).get();
 
-    EXPECT_TRUE(found);
-    EXPECT_EQ(value2, retrievedValue);
+    ASSERT_TRUE(retrievedValue.has_value());
+    EXPECT_EQ(value2, *retrievedValue);
 
     cache.disconnect();
 }
@@ -100,17 +98,16 @@ TEST(PutIntegrationTest, PutLargeValue) {
     ByteArray key = {'b', 'i', 'g', 'k', 'e', 'y'};
     ByteArray value(1000, 'Z');  // 1000 'Z' characters
 
-    bool hadPrevious = cache.put(key, value);
-    EXPECT_FALSE(hadPrevious);
+    auto prevValue = cache.put(key, value).get();
+    EXPECT_FALSE(prevValue.has_value());
 
     // GET to verify
-    ByteArray retrievedValue;
-    bool found = cache.get(key, retrievedValue);
+    auto retrievedValue = cache.get(key).get();
 
-    EXPECT_TRUE(found);
-    EXPECT_EQ(1000, retrievedValue.size());
-    EXPECT_EQ('Z', retrievedValue[0]);
-    EXPECT_EQ('Z', retrievedValue[999]);
+    ASSERT_TRUE(retrievedValue.has_value());
+    EXPECT_EQ(1000, retrievedValue->size());
+    EXPECT_EQ('Z', (*retrievedValue)[0]);
+    EXPECT_EQ('Z', (*retrievedValue)[999]);
 
     cache.disconnect();
 }
@@ -127,15 +124,14 @@ TEST(PutIntegrationTest, PutEmptyValue) {
     ByteArray key = {'e', 'm', 'p', 't', 'y'};
     ByteArray value;  // Empty
 
-    bool hadPrevious = cache.put(key, value);
-    EXPECT_FALSE(hadPrevious);
+    auto prevValue = cache.put(key, value).get();
+    EXPECT_FALSE(prevValue.has_value());
 
     // GET to verify
-    ByteArray retrievedValue;
-    bool found = cache.get(key, retrievedValue);
+    auto retrievedValue = cache.get(key).get();
 
-    EXPECT_TRUE(found);
-    EXPECT_EQ(0, retrievedValue.size());
+    ASSERT_TRUE(retrievedValue.has_value());
+    EXPECT_EQ(0, retrievedValue->size());
 
     cache.disconnect();
 }
@@ -156,14 +152,13 @@ TEST(PutIntegrationTest, MultiplePuts) {
         ByteArray key(keyStr.begin(), keyStr.end());
         ByteArray value(valueStr.begin(), valueStr.end());
 
-        bool hadPrevious = cache.put(key, value);
-        EXPECT_FALSE(hadPrevious) << "PUT #" << i << " failed";
+        auto prevValue = cache.put(key, value).get();
+        EXPECT_FALSE(prevValue.has_value()) << "PUT #" << i << " failed";
 
         // Verify immediately
-        ByteArray retrieved;
-        bool found = cache.get(key, retrieved);
-        EXPECT_TRUE(found) << "GET #" << i << " failed";
-        EXPECT_EQ(value, retrieved) << "Value mismatch for #" << i;
+        auto retrieved = cache.get(key).get();
+        ASSERT_TRUE(retrieved.has_value()) << "GET #" << i << " failed";
+        EXPECT_EQ(value, *retrieved) << "Value mismatch for #" << i;
     }
 
     cache.disconnect();
@@ -189,22 +184,20 @@ TEST(PutIntegrationTest, PutToDifferentCaches) {
     ByteArray value2 = {'c', 'a', 'c', 'h', 'e', '2'};
 
     // PUT to cache1
-    cache1.put(key, value1);
+    cache1.put(key, value1).get();
 
     // PUT to cache2
-    cache2.put(key, value2);
+    cache2.put(key, value2).get();
 
     // GET from cache1
-    ByteArray retrieved1;
-    bool found1 = cache1.get(key, retrieved1);
-    EXPECT_TRUE(found1);
-    EXPECT_EQ(value1, retrieved1);
+    auto retrieved1 = cache1.get(key).get();
+    ASSERT_TRUE(retrieved1.has_value());
+    EXPECT_EQ(value1, *retrieved1);
 
     // GET from cache2
-    ByteArray retrieved2;
-    bool found2 = cache2.get(key, retrieved2);
-    EXPECT_TRUE(found2);
-    EXPECT_EQ(value2, retrieved2);
+    auto retrieved2 = cache2.get(key).get();
+    ASSERT_TRUE(retrieved2.has_value());
+    EXPECT_EQ(value2, *retrieved2);
 
     cache1.disconnect();
     cache2.disconnect();
@@ -222,7 +215,7 @@ TEST(PutIntegrationTest, PutAfterDisconnect) {
     ByteArray value = {'v', 'a', 'l'};
 
     EXPECT_THROW({
-        cache.put(key, value);
+        cache.put(key, value).get();
     }, std::runtime_error);
 }
 
@@ -239,14 +232,13 @@ TEST(PutIntegrationTest, PutWithLifespan) {
     ByteArray value = {'e', 'x', 'p', 'v', 'a', 'l'};
 
     // PUT with 10 second lifespan
-    bool hadPrevious = cache.put(key, value, 10, 0);
-    EXPECT_FALSE(hadPrevious);
+    auto prevValue = cache.put(key, value, 10, 0).get();
+    EXPECT_FALSE(prevValue.has_value());
 
     // GET immediately (should exist)
-    ByteArray retrieved;
-    bool found = cache.get(key, retrieved);
-    EXPECT_TRUE(found);
-    EXPECT_EQ(value, retrieved);
+    auto retrieved = cache.get(key).get();
+    ASSERT_TRUE(retrieved.has_value());
+    EXPECT_EQ(value, *retrieved);
 
     // Note: Not testing actual expiration (would require waiting 10+ seconds)
 

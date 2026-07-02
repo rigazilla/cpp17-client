@@ -41,6 +41,17 @@ public:
                           const TopologyInfo& topology);
 
     /**
+     * Update consistent hash from TopologyInfo.
+     *
+     * TopologyInfo stores segmentOwners_[segment][owner] = server index (uint8).
+     * ConsistentHash stores segmentOwners_[segment][owner] = server hashId (int32).
+     * This method converts the indices to hashIds.
+     *
+     * @param topology Topology with hash distribution data
+     */
+    void updateFromTopology(const TopologyInfo& topology);
+
+    /**
      * Get the segment number for a key.
      *
      * Algorithm:

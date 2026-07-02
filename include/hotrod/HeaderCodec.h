@@ -13,6 +13,8 @@ class Connection;
 namespace Protocol {
     const uint8_t REQUEST_MAGIC = 0xA0;
     const uint8_t RESPONSE_MAGIC = 0xA1;
+    const uint8_t VERSION_30 = 0x1E;  // 30 decimal
+    const uint8_t VERSION_31 = 0x1F;  // 31 decimal
     const uint8_t VERSION_40 = 0x28;  // 40 decimal
     const uint8_t VERSION_41 = 0x29;  // 41 decimal
 }

@@ -42,10 +42,6 @@ if [ -z "$EXISTING" ]; then
     exit 0
 fi
 
-echo "Removing node $NODE_NUM from cluster $CLUSTER_ID" >&2
-
-# Stop and remove the node
-docker compose -f "$COMPOSE_FILE" -p "$CLUSTER_ID" stop "$SERVICE"
-docker compose -f "$COMPOSE_FILE" -p "$CLUSTER_ID" rm -f "$SERVICE"
-
-echo "Node $NODE_NUM removed from cluster $CLUSTER_ID" >&2
+# Stop and remove the node (hide progress, show errors)
+docker compose -f "$COMPOSE_FILE" -p "$CLUSTER_ID" stop "$SERVICE" >/dev/null
+docker compose -f "$COMPOSE_FILE" -p "$CLUSTER_ID" rm -f "$SERVICE" >/dev/null

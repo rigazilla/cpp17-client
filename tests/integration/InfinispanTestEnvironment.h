@@ -63,8 +63,8 @@ public:
     }
 
     void TearDown() override {
-        // Stop and remove container
-        std::string cmd = "./scripts/stop_infinispan.sh " + containerID;
+        // Stop and remove container (hide stdout, show stderr)
+        std::string cmd = "./scripts/stop_infinispan.sh " + containerID + " >/dev/null";
         system(cmd.c_str());
     }
 };

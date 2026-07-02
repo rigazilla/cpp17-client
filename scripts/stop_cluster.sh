@@ -21,9 +21,5 @@ if [ ! -f "$COMPOSE_FILE" ]; then
     exit 1
 fi
 
-echo "Stopping cluster: $CLUSTER_ID" >&2
-
-# Stop and remove all containers, networks, volumes
-docker compose -f "$COMPOSE_FILE" -p "$CLUSTER_ID" down -v
-
-echo "Cluster $CLUSTER_ID stopped" >&2
+# Stop and remove all containers, networks, volumes (hide progress, show errors)
+docker compose -f "$COMPOSE_FILE" -p "$CLUSTER_ID" down -v >/dev/null

@@ -103,10 +103,36 @@ public:
      */
     size_t getServerCount() const { return servers_.size(); }
 
+    /**
+     * Get hash function version.
+     */
+    uint8_t getHashFunctionVersion() const { return hashFunctionVersion_; }
+
+    /**
+     * Get number of segments.
+     */
+    VInt getNumSegments() const { return numSegments_; }
+
+    /**
+     * Get segment owners.
+     * segmentOwners_[segment][ownerIndex] = server hash ID (uint8_t index into servers_)
+     */
+    const std::vector<std::vector<uint8_t>>& getSegmentOwners() const { return segmentOwners_; }
+
+    /**
+     * Check if hash topology data is available.
+     */
+    bool hasHashTopology() const { return numSegments_ > 0; }
+
 private:
     int topologyId_;
     std::vector<ServerInfo> servers_;
     size_t roundRobinIndex_;  // For round-robin server selection
+
+    // Hash topology data (only populated when ClientIntelligence == HASH_DISTRIBUTION_AWARE)
+    uint8_t hashFunctionVersion_{0};
+    VInt numSegments_{0};
+    std::vector<std::vector<uint8_t>> segmentOwners_;  // [segment][ownerIndex] = server hash ID
 };
 
 } // namespace hotrod

@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.15)
 project(hotrod-client-cpp VERSION 0.1.0 LANGUAGES CXX)
 
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Build type" FORCE)
+endif()
+
 # C++17 required
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -25,6 +29,7 @@ set(SOURCES
     src/hash/MurmurHash3.cpp
     src/hash/ConsistentHash.cpp
     src/transport/Connection.cpp
+    src/transport/MultiplexedConnection.cpp
     src/operations/RemoteCache.cpp
 )
 
@@ -170,6 +175,18 @@ if(GTest_FOUND)
             # Note: NOT gtest_main - we provide our own main()
     )
 
+    # Concurrent multi-server integration tests
+    add_executable(concurrent_multiserver_tests
+        tests/integration/ConcurrentMultiServerTest.cpp
+    )
+
+    target_link_libraries(concurrent_multiserver_tests
+        PRIVATE
+            hotrod-client
+            GTest::gtest
+            # Note: NOT gtest_main - we provide our own main()
+    )
+
     add_test(NAME PingIntegrationTests COMMAND ping_integration_tests)
     add_test(NAME GetIntegrationTests COMMAND get_integration_tests)
     add_test(NAME PutIntegrationTests COMMAND put_integration_tests)
@@ -177,6 +194,7 @@ if(GTest_FOUND)
     add_test(NAME TopologyIntegrationTests COMMAND topology_integration_tests)
     add_test(NAME ConcurrentClientsTests COMMAND concurrent_clients_tests)
     add_test(NAME HashAwareRoutingIntegrationTests COMMAND hash_aware_routing_integration_tests)
+    add_test(NAME ConcurrentMultiServerTests COMMAND concurrent_multiserver_tests)
 
     # Set working directory so scripts can be found
     set_tests_properties(PingIntegrationTests PROPERTIES
@@ -206,6 +224,10 @@ if(GTest_FOUND)
     set_tests_properties(HashAwareRoutingIntegrationTests PROPERTIES
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         LABELS "integration;docker;topology;multi-server;hash-aware"
+    )
+    set_tests_properties(ConcurrentMultiServerTests PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        LABELS "integration;docker;concurrent;multi-server"
     )
 
     message(STATUS "Google Test found - unit tests and integration tests enabled")

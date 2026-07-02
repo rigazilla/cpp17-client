@@ -37,13 +37,10 @@ for i in $(seq 2 $NUM_NODES); do
     SERVICES="$SERVICES ispn-node$i"
 done
 
-echo "Starting $NUM_NODES-node cluster: $CLUSTER_ID" >&2
-
-# Start cluster with docker compose
-docker compose -f "$COMPOSE_FILE" -p "$CLUSTER_ID" up -d $SERVICES
+# Start cluster with docker compose (hide progress, show errors)
+docker compose -f "$COMPOSE_FILE" -p "$CLUSTER_ID" up -d $SERVICES >/dev/null
 
 # Wait for all nodes to be healthy
-echo "Waiting for nodes to be healthy..." >&2
 for i in $(seq 1 $NUM_NODES); do
     SERVICE="ispn-node${i}"
     CONTAINER="${SERVICE}"  # Docker Compose V2 uses service name directly
@@ -56,11 +53,9 @@ for i in $(seq 1 $NUM_NODES); do
     " || {
         echo "ERROR: Node $i failed to become healthy" >&2
         docker logs "$CONTAINER" >&2 2>&1
-        docker compose -f "$COMPOSE_FILE" -p "$CLUSTER_ID" down
+        docker compose -f "$COMPOSE_FILE" -p "$CLUSTER_ID" down >/dev/null
         exit 1
     }
-
-    echo "Node $i healthy" >&2
 done
 
 # Wait for cluster formation
@@ -79,11 +74,9 @@ while true; do
 done
 " || {
     echo "ERROR: Cluster failed to form with $NUM_NODES members" >&2
-    docker compose -f "$COMPOSE_FILE" -p "$CLUSTER_ID" down
+    docker compose -f "$COMPOSE_FILE" -p "$CLUSTER_ID" down >/dev/null
     exit 1
 }
-
-echo "Cluster formed with $NUM_NODES nodes" >&2
 
 # Export cluster info for C++ tests
 echo "export ISPN_CLUSTER_ID=$CLUSTER_ID"
@@ -100,7 +93,7 @@ for i in $(seq 1 $NUM_NODES); do
 
     if [ -z "$PORT" ]; then
         echo "ERROR: Failed to get mapped port for node $i" >&2
-        docker compose -f "$COMPOSE_FILE" -p "$CLUSTER_ID" down
+        docker compose -f "$COMPOSE_FILE" -p "$CLUSTER_ID" down >/dev/null
         exit 1
     fi
 
@@ -110,5 +103,3 @@ for i in $(seq 1 $NUM_NODES); do
 
     echo "Node $i: $HOST:$PORT (container: $CONTAINER)" >&2
 done
-
-echo "Cluster $CLUSTER_ID started successfully" >&2

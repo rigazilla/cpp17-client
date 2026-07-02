@@ -10,6 +10,8 @@ using namespace hotrod::test;
  *
  * Tests run against Infinispan server managed by InfinispanTestEnvironment.
  * Server lifecycle: SetUp once before all tests, TearDown once after all tests.
+ *
+ * NOTE: Updated for async API - ping() returns std::future<void>
  */
 
 // Test 1: Basic PING to default cache
@@ -18,9 +20,8 @@ TEST(PingIntegrationTest, BasicPing) {
                       InfinispanTestEnvironment::port);
     cache.connect();
 
-    bool result = cache.ping();
-
-    EXPECT_TRUE(result);
+    // ping() now returns future<void>
+    cache.ping().get();  // Blocks until complete, throws on error
 
     cache.disconnect();
 }
@@ -32,9 +33,7 @@ TEST(PingIntegrationTest, PingWithEmptyCacheName) {
                       "");  // Empty cache name = default cache
     cache.connect();
 
-    bool result = cache.ping();
-
-    EXPECT_TRUE(result);
+    cache.ping().get();
 
     cache.disconnect();
 }
@@ -46,8 +45,7 @@ TEST(PingIntegrationTest, MultiplePings) {
     cache.connect();
 
     for (int i = 0; i < 10; i++) {
-        bool result = cache.ping();
-        EXPECT_TRUE(result) << "PING #" << i << " failed";
+        cache.ping().get();
     }
 
     cache.disconnect();
@@ -61,7 +59,7 @@ TEST(PingIntegrationTest, PingAfterDisconnect) {
     cache.disconnect();
 
     EXPECT_THROW({
-        cache.ping();
+        cache.ping().get();
     }, std::runtime_error);
 }
 
@@ -72,14 +70,12 @@ TEST(PingIntegrationTest, ReconnectAndPing) {
 
     // First connection
     cache.connect();
-    bool result1 = cache.ping();
-    EXPECT_TRUE(result1);
+    cache.ping().get();
     cache.disconnect();
 
     // Reconnect
     cache.connect();
-    bool result2 = cache.ping();
-    EXPECT_TRUE(result2);
+    cache.ping().get();
     cache.disconnect();
 }
 

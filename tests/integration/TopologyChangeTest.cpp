@@ -33,8 +33,7 @@ TEST_F(TopologyTest, ThreeNodeCluster) {
     ASSERT_NE(nullptr, cache);
 
     // Verify connectivity with PING
-    bool pingResult = cache->ping();
-    EXPECT_TRUE(pingResult) << "PING should succeed";
+    cache->ping();
 }
 
 // Test 2: Add server to cluster (3 → 4 nodes)
@@ -69,12 +68,11 @@ TEST_F(TopologyTest, AddServer) {
         std::string key = "key-" + std::to_string(i);
         std::string expectedValue = "value-" + std::to_string(i);
         ByteArray keyBytes(key.begin(), key.end());
-        ByteArray valueBytes;
 
-        bool found = cache->get(keyBytes, valueBytes);
-        ASSERT_TRUE(found) << "Key '" << key << "' should be found after adding node";
+        auto found = cache->get(keyBytes).get();
+        ASSERT_TRUE(found.has_value()) << "Key '" << key << "' should be found after adding node";
 
-        std::string actualValue(valueBytes.begin(), valueBytes.end());
+        std::string actualValue(found.value().begin(), found.value().end());
         EXPECT_EQ(expectedValue, actualValue) << "Value mismatch for key '" << key << "'";
     }
 
@@ -94,8 +92,8 @@ TEST_F(TopologyTest, AddServer) {
         ByteArray keyBytes(key.begin(), key.end());
         ByteArray valueBytes;
 
-        bool found = cache->get(keyBytes, valueBytes);
-        EXPECT_TRUE(found) << "Key '" << key << "' should be accessible with 4 nodes";
+        auto found = cache->get(keyBytes).get();
+        EXPECT_TRUE(found.has_value()) << "Key '" << key << "' should be accessible with 4 nodes";
     }
 }
 
@@ -131,12 +129,11 @@ TEST_F(TopologyTest, RemoveServer) {
         std::string key = "key-" + std::to_string(i);
         std::string expectedValue = "value-" + std::to_string(i);
         ByteArray keyBytes(key.begin(), key.end());
-        ByteArray valueBytes;
 
-        bool found = cache->get(keyBytes, valueBytes);
-        ASSERT_TRUE(found) << "Key '" << key << "' should be found after removing node";
+        auto found = cache->get(keyBytes).get();
+        ASSERT_TRUE(found.has_value()) << "Key '" << key << "' should be found after removing node";
 
-        std::string actualValue(valueBytes.begin(), valueBytes.end());
+        std::string actualValue(found.value().begin(), found.value().end());
         EXPECT_EQ(expectedValue, actualValue);
     }
 }
@@ -169,8 +166,8 @@ TEST_F(TopologyTest, ScaleUpAndDown) {
     // Verify data
     for (int i = 0; i < 5; i++) {
         ByteArray keyBytes(keys[i].begin(), keys[i].end());
-        ByteArray valueBytes;
-        EXPECT_TRUE(cache->get(keyBytes, valueBytes)) << "Key lost after scale to 3";
+        auto found = cache->get(keyBytes).get();
+        EXPECT_TRUE(found.has_value()) << "Key lost after scale to 3";
     }
 
     // Scale to 4 nodes
@@ -181,8 +178,8 @@ TEST_F(TopologyTest, ScaleUpAndDown) {
     // Verify data
     for (int i = 0; i < 5; i++) {
         ByteArray keyBytes(keys[i].begin(), keys[i].end());
-        ByteArray valueBytes;
-        EXPECT_TRUE(cache->get(keyBytes, valueBytes)) << "Key lost after scale to 4";
+        auto found = cache->get(keyBytes).get();
+        EXPECT_TRUE(found.has_value()) << "Key lost after scale to 4";
     }
 
     // Scale down to 3
@@ -193,8 +190,8 @@ TEST_F(TopologyTest, ScaleUpAndDown) {
     // Verify data
     for (int i = 0; i < 5; i++) {
         ByteArray keyBytes(keys[i].begin(), keys[i].end());
-        ByteArray valueBytes;
-        EXPECT_TRUE(cache->get(keyBytes, valueBytes)) << "Key lost after scale down to 3";
+        auto found = cache->get(keyBytes).get();
+        EXPECT_TRUE(found.has_value()) << "Key lost after scale down to 3";
     }
 
     // Scale down to 2
@@ -205,8 +202,8 @@ TEST_F(TopologyTest, ScaleUpAndDown) {
     // Verify data (should still exist with 2 owners)
     for (int i = 0; i < 5; i++) {
         ByteArray keyBytes(keys[i].begin(), keys[i].end());
-        ByteArray valueBytes;
-        EXPECT_TRUE(cache->get(keyBytes, valueBytes)) << "Key lost after scale down to 2";
+        auto found = cache->get(keyBytes).get();
+        EXPECT_TRUE(found.has_value()) << "Key lost after scale down to 2";
     }
 }
 
@@ -221,9 +218,9 @@ TEST_F(TopologyTest, MultipleClientsSeeTopologyChange) {
     auto client3 = createClient(2);  // Node 3
 
     // All clients should be able to PING
-    EXPECT_TRUE(client1->ping());
-    EXPECT_TRUE(client2->ping());
-    EXPECT_TRUE(client3->ping());
+    client1->ping().get();
+    client2->ping().get();
+    client3->ping().get();
 
     // Add 4th node
     addNode(4);
@@ -234,20 +231,19 @@ TEST_F(TopologyTest, MultipleClientsSeeTopologyChange) {
     waitForTopologyUpdate(client3, 4, 10);
 
     // All clients should still work
-    EXPECT_TRUE(client1->ping());
-    EXPECT_TRUE(client2->ping());
-    EXPECT_TRUE(client3->ping());
+    client1->ping().get();
+    client2->ping().get();
+    client3->ping().get();
 
     // Put data via client1
     ByteArray key = {'m', 'u', 'l', 't', 'i'};
     ByteArray value = {'t', 'e', 's', 't'};
-    client1->put(key, value);
+    client1->put(key, value).get();
 
     // Read via client2 (cross-client validation)
-    ByteArray readValue;
-    bool found = client2->get(key, readValue);
-    EXPECT_TRUE(found);
-    EXPECT_EQ(value, readValue);
+    auto found = client2->get(key).get();
+    EXPECT_TRUE(found.has_value()) << "Client2 should find key put by Client1";
+    EXPECT_EQ(value, found.value()) << "Value mismatch for key 'multi'";
 }
 
 // Test 6: Data survives node removal (distributed cache with 2 owners)
@@ -265,7 +261,7 @@ TEST_F(TopologyTest, DataSurvivesNodeRemoval) {
         keys.push_back(key);
 
         ByteArray value = {(uint8_t)(i & 0xFF), (uint8_t)((i >> 8) & 0xFF)};
-        cache->put(key, value);
+        cache->put(key, value).get();
     }
 
     // Remove node 3
@@ -276,7 +272,7 @@ TEST_F(TopologyTest, DataSurvivesNodeRemoval) {
     int foundCount = 0;
     for (const auto& key : keys) {
         ByteArray value;
-        if (cache->get(key, value)) {
+        if (cache->get(key).get().has_value()) {
             foundCount++;
         }
     }

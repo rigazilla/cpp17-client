@@ -82,9 +82,61 @@ void Connection::connect() {
         }
 #endif
 
-        // Attempt to connect
-        if (::connect(socket_, rp->ai_addr, static_cast<socklen_t>(rp->ai_addrlen)) == 0) {
+        // Set socket to non-blocking mode for connect with timeout
+#ifdef _WIN32
+        u_long mode = 1;
+        ioctlsocket(socket_, FIONBIO, &mode);
+#else
+        int flags = fcntl(socket_, F_GETFL, 0);
+        fcntl(socket_, F_SETFL, flags | O_NONBLOCK);
+#endif
+
+        // Attempt to connect (non-blocking)
+        int connectResult = ::connect(socket_, rp->ai_addr, static_cast<socklen_t>(rp->ai_addrlen));
+
+        if (connectResult == 0) {
+            // Immediate success (rare for non-blocking)
             connected_ = true;
+        } else {
+#ifdef _WIN32
+            int error = WSAGetLastError();
+            if (error == WSAEWOULDBLOCK || error == WSAEINPROGRESS) {
+#else
+            if (errno == EINPROGRESS) {
+#endif
+                // Connection in progress, wait with timeout (5 seconds)
+                fd_set writefds;
+                FD_ZERO(&writefds);
+                FD_SET(socket_, &writefds);
+
+                struct timeval timeout;
+                timeout.tv_sec = 5;   // 5 second timeout
+                timeout.tv_usec = 0;
+
+                int selectResult = select(socket_ + 1, nullptr, &writefds, nullptr, &timeout);
+
+                if (selectResult > 0) {
+                    // Check if connection succeeded
+                    int so_error;
+                    socklen_t len = sizeof(so_error);
+                    getsockopt(socket_, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&so_error), &len);
+
+                    if (so_error == 0) {
+                        connected_ = true;
+                    }
+                }
+            }
+        }
+
+        if (connected_) {
+            // Set socket back to blocking mode
+#ifdef _WIN32
+            mode = 0;
+            ioctlsocket(socket_, FIONBIO, &mode);
+#else
+            flags = fcntl(socket_, F_GETFL, 0);
+            fcntl(socket_, F_SETFL, flags & ~O_NONBLOCK);
+#endif
             break;  // Success
         }
 
@@ -164,6 +216,20 @@ ByteArray Connection::receive(size_t length) {
     return buffer;
 }
 
+void Connection::shutdown() {
+    if (!connected_ || socket_ == -1) {
+        return;
+    }
+
+    // Shutdown socket to interrupt blocking recv() calls
+    // SHUT_RDWR = 2 on both POSIX and Windows
+#ifdef _WIN32
+    ::shutdown(socket_, SD_BOTH);
+#else
+    ::shutdown(socket_, SHUT_RDWR);
+#endif
+}
+
 void Connection::close() {
     if (!connected_) {
         return;
@@ -177,6 +243,95 @@ void Connection::close() {
 
     socket_ = -1;
     connected_ = false;
+}
+
+// Helper methods for body parsers
+
+VInt Connection::receiveVInt() {
+    ByteArray firstByte = receive(1);
+    VInt value = firstByte[0] & 0x7F;
+
+    for (int shift = 7; (firstByte[0] & 0x80) != 0; shift += 7) {
+        ByteArray nextByte = receive(1);
+        value |= static_cast<VInt>(nextByte[0] & 0x7F) << shift;
+        firstByte[0] = nextByte[0];  // Update for continuation check
+    }
+
+    return value;
+}
+
+VLong Connection::receiveVLong() {
+    ByteArray firstByte = receive(1);
+    VLong value = firstByte[0] & 0x7F;
+
+    for (int shift = 7; (firstByte[0] & 0x80) != 0; shift += 7) {
+        ByteArray nextByte = receive(1);
+        value |= static_cast<VLong>(nextByte[0] & 0x7F) << shift;
+        firstByte[0] = nextByte[0];
+    }
+
+    return value;
+}
+
+ByteArray Connection::receiveByteArray() {
+    // Read vInt length
+    VInt length = receiveVInt();
+
+    // Read bytes
+    if (length > 0) {
+        return receive(length);
+    }
+    return {};
+}
+
+std::string Connection::receiveString() {
+    ByteArray bytes = receiveByteArray();
+    return std::string(bytes.begin(), bytes.end());
+}
+
+EntryMetadata Connection::receiveMetadata() {
+    EntryMetadata metadata;
+
+    // Read flag byte
+    uint8_t flag = receive(1)[0];
+
+    // Read created + lifespan if not infinite (flag bit 0 == 0)
+    if ((flag & 0x01) == 0) {
+        // created (s8 - signed 64-bit big-endian)
+        ByteArray createdBytes = receive(8);
+        int64_t created = 0;
+        for (int i = 0; i < 8; i++) {
+            created = (created << 8) | createdBytes[i];
+        }
+        metadata.created = created;
+
+        // lifespan (vint)
+        metadata.lifespan = receiveVInt();
+    }
+
+    // Read last_used + max_idle if not infinite (flag bit 1 == 0)
+    if ((flag & 0x02) == 0) {
+        // last_used (s8 - signed 64-bit big-endian)
+        ByteArray lastUsedBytes = receive(8);
+        int64_t lastUsed = 0;
+        for (int i = 0; i < 8; i++) {
+            lastUsed = (lastUsed << 8) | lastUsedBytes[i];
+        }
+        metadata.lastUsed = lastUsed;
+
+        // max_idle (vint)
+        metadata.maxIdle = receiveVInt();
+    }
+
+    // Read entry_version (s8 - always present)
+    ByteArray versionBytes = receive(8);
+    int64_t version = 0;
+    for (int i = 0; i < 8; i++) {
+        version = (version << 8) | versionBytes[i];
+    }
+    metadata.version = version;
+
+    return metadata;
 }
 
 } // namespace hotrod

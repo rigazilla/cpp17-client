@@ -107,16 +107,18 @@ void TopologyInfo::parseTopologyInfo(Connection* connection,
     if (intelligence == ClientIntelligence::HASH_DISTRIBUTION_AWARE) {
         // Read hash function version (u1)
         ByteArray hashVer = connection->receive(1);
-        hashFunctionVersion = hashVer[0];
+        hashFunctionVersion_ = hashVer[0];
+        hashFunctionVersion = hashFunctionVersion_;  // Also set output param for backward compat
 
         // Read number of segments (vInt)
-        numSegments = readVInt();
+        numSegments_ = readVInt();
+        numSegments = numSegments_;  // Also set output param for backward compat
 
         // Read segment owners
-        segmentOwners.clear();
-        segmentOwners.reserve(numSegments);
+        segmentOwners_.clear();
+        segmentOwners_.reserve(numSegments_);
 
-        for (VInt seg = 0; seg < numSegments; seg++) {
+        for (VInt seg = 0; seg < numSegments_; seg++) {
             // Read number of owners for this segment (u1)
             ByteArray numOwnersBytes = connection->receive(1);
             uint8_t numOwners = numOwnersBytes[0];
@@ -125,8 +127,9 @@ void TopologyInfo::parseTopologyInfo(Connection* connection,
             ByteArray ownerIndices = connection->receive(numOwners);
             std::vector<uint8_t> owners(ownerIndices.begin(), ownerIndices.end());
 
-            segmentOwners.push_back(std::move(owners));
+            segmentOwners_.push_back(std::move(owners));
         }
+        segmentOwners = segmentOwners_;  // Also set output param for backward compat
     }
 }
 

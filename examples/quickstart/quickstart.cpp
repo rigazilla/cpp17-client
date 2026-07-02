@@ -41,44 +41,46 @@ int main() {
 
         ByteArray keyBytes1(key1.begin(), key1.end());
         ByteArray valueBytes1(value1.begin(), value1.end());
-        cache.put(keyBytes1, valueBytes1);
+        cache.put(keyBytes1, valueBytes1).get();  // .get() waits for completion
         std::cout << "PUT: " << key1 << " = " << value1 << std::endl;
 
         ByteArray keyBytes2(key2.begin(), key2.end());
         ByteArray valueBytes2(value2.begin(), value2.end());
-        cache.put(keyBytes2, valueBytes2);
+        cache.put(keyBytes2, valueBytes2).get();
         std::cout << "PUT: " << key2 << " = " << value2 << std::endl;
 
         ByteArray keyBytes3(key3.begin(), key3.end());
         ByteArray valueBytes3(value3.begin(), value3.end());
-        cache.put(keyBytes3, valueBytes3);
+        cache.put(keyBytes3, valueBytes3).get();
         std::cout << "PUT: " << key3 << " = " << value3 << std::endl;
 
         // ===== GET: Retrieve values =====
         std::cout << "\n--- GET Operations ---" << std::endl;
 
-        ByteArray retrievedValue;
-
         // Get existing key
-        if (cache.get(keyBytes1, retrievedValue)) {
-            std::string valueStr(retrievedValue.begin(), retrievedValue.end());
+        auto result1 = cache.get(keyBytes1).get();
+        if (result1.has_value()) {
+            std::string valueStr(result1.value().begin(), result1.value().end());
             std::cout << "GET: " << key1 << " = " << valueStr << std::endl;
         }
 
-        if (cache.get(keyBytes2, retrievedValue)) {
-            std::string valueStr(retrievedValue.begin(), retrievedValue.end());
+        auto result2 = cache.get(keyBytes2).get();
+        if (result2.has_value()) {
+            std::string valueStr(result2.value().begin(), result2.value().end());
             std::cout << "GET: " << key2 << " = " << valueStr << std::endl;
         }
 
-        if (cache.get(keyBytes3, retrievedValue)) {
-            std::string valueStr(retrievedValue.begin(), retrievedValue.end());
+        auto result3 = cache.get(keyBytes3).get();
+        if (result3.has_value()) {
+            std::string valueStr(result3.value().begin(), result3.value().end());
             std::cout << "GET: " << key3 << " = " << valueStr << std::endl;
         }
 
         // Try to get non-existent key
         std::string missingKey = "nonexistent";
         ByteArray missingKeyBytes(missingKey.begin(), missingKey.end());
-        if (!cache.get(missingKeyBytes, retrievedValue)) {
+        auto missingResult = cache.get(missingKeyBytes).get();
+        if (!missingResult.has_value()) {
             std::cout << "GET: " << missingKey << " = <not found>" << std::endl;
         }
 
@@ -86,12 +88,12 @@ int main() {
         std::cout << "\n--- REMOVE Operations ---" << std::endl;
 
         // Remove an entry
-        if (cache.remove(keyBytes2)) {
-            std::cout << "REMOVE: " << key2 << " deleted successfully" << std::endl;
-        }
+        cache.remove(keyBytes2).get();
+        std::cout << "REMOVE: " << key2 << " deleted successfully" << std::endl;
 
         // Verify it's gone
-        if (!cache.get(keyBytes2, retrievedValue)) {
+        auto verifyResult = cache.get(keyBytes2).get();
+        if (!verifyResult.has_value()) {
             std::cout << "GET: " << key2 << " = <not found (after delete)>" << std::endl;
         }
 
@@ -99,13 +101,15 @@ int main() {
         std::cout << "\n--- Summary ---" << std::endl;
         std::cout << "Remaining entries in cache:" << std::endl;
 
-        if (cache.get(keyBytes1, retrievedValue)) {
-            std::string valueStr(retrievedValue.begin(), retrievedValue.end());
+        auto summary1 = cache.get(keyBytes1).get();
+        if (summary1.has_value()) {
+            std::string valueStr(summary1.value().begin(), summary1.value().end());
             std::cout << "  " << key1 << " = " << valueStr << std::endl;
         }
 
-        if (cache.get(keyBytes3, retrievedValue)) {
-            std::string valueStr(retrievedValue.begin(), retrievedValue.end());
+        auto summary3 = cache.get(keyBytes3).get();
+        if (summary3.has_value()) {
+            std::string valueStr(summary3.value().begin(), summary3.value().end());
             std::cout << "  " << key3 << " = " << valueStr << std::endl;
         }
 

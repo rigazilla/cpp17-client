@@ -2,12 +2,15 @@
 
 #include "Types.h"
 #include "Connection.h"
+#include "MultiplexedConnection.h"
 #include "HeaderCodec.h"
 #include "ConsistentHash.h"
 #include <string>
 #include <memory>
 #include <cstdint>
 #include <map>
+#include <future>
+#include <optional>
 
 namespace hotrod {
 
@@ -46,10 +49,10 @@ public:
      *
      * Opcode: 0x17 (PING_REQUEST) → 0x18 (PING_RESPONSE)
      *
-     * @return true if server responded successfully
-     * @throws std::runtime_error if PING fails
+     * @return Future that completes when PING response received
+     * @throws std::runtime_error if PING fails (via future.get())
      */
-    bool ping();
+    std::future<void> ping();
 
     /**
      * GET operation - retrieve value for key.
@@ -57,14 +60,18 @@ public:
      * Opcode: 0x03 (GET_REQUEST) → 0x04 (GET_RESPONSE)
      *
      * @param key The key as raw bytes
-     * @param value Output parameter for the value (if found)
-     * @return true if key exists, false if not found
-     * @throws std::runtime_error on communication errors
+     * @return Future with optional<ByteArray>: value if found, nullopt if not found
+     * @throws std::runtime_error on communication errors (via future.get())
+     *
+     * Usage:
+     *   if (auto value = cache.get(key).get()) {
+     *       // key found, use *value
+     *   }
      *
      * Reference:
      * - Java: org.infinispan.client.hotrod.impl.operations.GetOperation
      */
-    bool get(const ByteArray& key, ByteArray& value);
+    std::future<std::optional<ByteArray>> get(const ByteArray& key);
 
     /**
      * PUT operation - store key-value pair.
@@ -75,17 +82,25 @@ public:
      * @param value The value as raw bytes
      * @param lifespan Entry lifespan in seconds (0 = immortal)
      * @param maxIdle Max idle time in seconds (0 = no max idle)
-     * @param previousValue Output parameter for previous value (if existed)
-     * @return true if previous value existed, false otherwise
-     * @throws std::runtime_error on communication errors
+     * @param previousValue If true, request previous value with metadata (Protocol 4.0+)
+     * @return Future with optional<EntryWithMetadata>: previous entry if existed, nullopt otherwise
+     * @throws std::runtime_error on communication errors (via future.get())
+     *
+     * Usage:
+     *   if (auto prevEntry = cache.put(key, value, 0, 0, true).get()) {
+     *       // key already existed
+     *       ByteArray& prevValue = prevEntry->value;
+     *       int64_t version = prevEntry->metadata.version;
+     *   }
      *
      * Reference:
      * - Java: org.infinispan.client.hotrod.impl.operations.PutOperation
      * - Java: org.infinispan.client.hotrod.impl.operations.AbstractKeyValueOperation
      */
-    bool put(const ByteArray& key, const ByteArray& value,
-             uint64_t lifespan = 0, uint64_t maxIdle = 0,
-             ByteArray* previousValue = nullptr);
+    std::future<std::optional<EntryWithMetadata>> put(const ByteArray &key, const ByteArray &value,
+                                                      uint64_t lifespan = 0, uint64_t maxIdle = 0, bool previousValue = false);
+
+    const std::future<std::optional<hotrod::EntryWithMetadata>> &example(uint8_t status, uint8_t protocolVersion, hotrod::Connection *conn);
 
     /**
      * REMOVE operation - delete key-value pair.
@@ -93,14 +108,21 @@ public:
      * Opcode: 0x0B (REMOVE_REQUEST) → 0x0C (REMOVE_RESPONSE)
      *
      * @param key The key as raw bytes
-     * @param previousValue Output parameter for previous value (if existed)
-     * @return true if key existed and was removed, false if key didn't exist
-     * @throws std::runtime_error on communication errors
+     * @param previousValue If true, request previous value with metadata (Protocol 4.0+)
+     * @return Future with optional<EntryWithMetadata>: previous entry if existed, nullopt otherwise
+     * @throws std::runtime_error on communication errors (via future.get())
+     *
+     * Usage:
+     *   if (auto prevEntry = cache.remove(key, true).get()) {
+     *       // key existed and was removed
+     *       ByteArray& prevValue = prevEntry->value;
+     *       int64_t version = prevEntry->metadata.version;
+     *   }
      *
      * Reference:
      * - Java: org.infinispan.client.hotrod.impl.operations.RemoveOperation
      */
-    bool remove(const ByteArray& key, ByteArray* previousValue = nullptr);
+    std::future<std::optional<EntryWithMetadata>> remove(const ByteArray& key, bool previousValue = false);
 
     /**
      * Close connection to server.
@@ -121,6 +143,22 @@ public:
      * Set cache name.
      */
     void setCacheName(const std::string& name) { cacheName_ = name; }
+
+    /**
+     * Set protocol version.
+     *
+     * @param version Protocol version (e.g., Protocol::VERSION_40, Protocol::VERSION_41)
+     */
+    void setProtocolVersion(uint8_t version) {
+        protocolVersion_ = version;
+    }
+
+    /**
+     * Get current protocol version.
+     */
+    uint8_t getProtocolVersion() const {
+        return protocolVersion_;
+    }
 
     /**
      * Set client intelligence level.
@@ -169,34 +207,21 @@ private:
     std::string host_;
     uint16_t port_;
     std::string cacheName_;
-    std::unique_ptr<Connection> connection_;
-    uint64_t messageIdCounter_;  // For generating unique message IDs
+    std::unique_ptr<MultiplexedConnection> connection_;
+    // Note: messageIdCounter_ removed - MultiplexedConnection generates IDs
+    uint8_t protocolVersion_;  // Protocol version (default: VERSION_41)
     ClientIntelligence clientIntelligence_;  // Client intelligence level
     TopologyInfo topology_;  // Current cluster topology
     ConsistentHash consistentHash_;  // Hash-aware routing (for HASH_DISTRIBUTION_AWARE)
 
-    // Connection pool: one connection per server (simple pooling)
-    // Key = "host:port", Value = Connection instance
-    std::map<std::string, std::unique_ptr<Connection>> connectionPool_;
+    // Connection pool: one MultiplexedConnection per server
+    // Key = "host:port", Value = MultiplexedConnection instance
+    std::map<std::string, std::unique_ptr<MultiplexedConnection>> connectionPool_;
 
     /**
-     * Get next message ID.
+     * Handle topology update callback from MultiplexedConnection.
      */
-    uint64_t nextMessageId();
-
-    /**
-     * Send request and receive response (uses default connection).
-     */
-    ByteArray sendRequest(const ByteArray& request);
-
-    /**
-     * Send request to a specific connection and receive response.
-     *
-     * @param request The request bytes to send
-     * @param conn The connection to use (from selectServerForKey or default)
-     * @return Response header bytes (topology already parsed and consumed)
-     */
-    ByteArray sendRequestToConnection(const ByteArray& request, Connection* conn);
+    void handleTopologyUpdate(const TopologyInfo& topo, const std::string& cacheName);
 
     /**
      * Select server connection for a given key using hash-aware routing.
@@ -211,25 +236,15 @@ private:
      * @param key The key to route
      * @return Connection to use for this key (never null)
      */
-    Connection* selectServerForKey(const ByteArray& key);
+    MultiplexedConnection* selectServerForKey(const ByteArray& key);
 
     /**
      * Get or create connection for a specific server.
      *
      * @param server Server information (host, port, hashId)
-     * @return Connection to the server (never null)
+     * @return MultiplexedConnection to the server (never null)
      */
-    Connection* getConnectionForServer(const ServerInfo& server);
-
-    /**
-     * Send request with automatic failover.
-     * Tries all owners (primary + backups), then any server in topology.
-     *
-     * @param request The request bytes to send
-     * @param key The key (for hash-aware routing and logging)
-     * @return Pair of (response, connection) from first successful server
-     */
-    std::pair<ByteArray, Connection*> sendRequestWithFailover(const ByteArray& request, const ByteArray& key);
+    MultiplexedConnection* getConnectionForServer(const ServerInfo& server);
 
     /**
      * Clean up connections to servers no longer in topology.
