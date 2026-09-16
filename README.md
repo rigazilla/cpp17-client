@@ -139,11 +139,14 @@ ctest --output-on-failure
 
 ## Status
 
+> 📌 **Live status lives in [docs/STATUS.md](docs/STATUS.md)** — start there after any break.
+> Design rationale is in [docs/DECISIONS.md](docs/DECISIONS.md).
+
 **Current Progress**: Steps 0-12 COMPLETE ✅ - Full CRUD + Hash-Aware Routing! See [PROGRESS.md](PROGRESS.md)
 
-**Test Results**:
-- Unit Tests: **155/155 passing** ✅
-- Integration Tests: **38/38 passing** ✅ (against live Infinispan 16.2 server)
+**Test Results** (verified 2026-09-16):
+- Unit Tests: **145/145 passing** ✅
+- Integration Tests: **46/46 passing** ✅ (against live Infinispan via Docker)
 
 ## Features
 
@@ -276,7 +279,8 @@ Apache 2.0 (matching Infinispan project)
 
 Following the hotrod-foundry porting guidelines:
 - One step at a time (complete step N before step N+1)
-- Update PROGRESS.md after each step
+- Update [docs/STATUS.md](docs/STATUS.md) at the end of each session (next steps + date)
+- Log design decisions in [docs/DECISIONS.md](docs/DECISIONS.md) as you make them
 - Validate against test vectors
 - Ensure cross-platform compatibility
 
