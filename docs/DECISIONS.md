@@ -83,3 +83,26 @@ generated IDs avoid cross-layer coordination. Body-parser lambdas keep response
 decoding next to each operation.
 **Alternatives:** Connection-per-request pool (more sockets, contention);
 caller-generated message IDs (needs shared counter across layers).
+
+## 2026-09-16 — Source hierarchy: Java client first, Kaitai schema for byte layout
+
+**Decision:** Rank the protocol references explicitly.
+1. **Java client** is authoritative for *behavior and semantics* (what each op
+   does, statuses, edge cases) — study it first for every step (MANDATORY, per
+   the porting workflow). Local
+   `/home/rigazilla/git/infinispan/client/hotrod-client/`, public
+   <https://github.com/infinispan/infinispan/tree/main/client/hotrod-client>.
+2. **Kaitai schema** (`hotrod40.ksy`, protocol 4.0/4.1) is authoritative for
+   *byte layout* — a precise, machine-readable cross-check of the Java client.
+   Local `../hotrod-dissector/schemas/`, public
+   <https://github.com/rigazilla/hotrod-dissector/tree/main/schemas>.
+3. **Test vectors** are the regression check baked into unit tests.
+If any two disagree, one has a bug — stop and investigate before shipping.
+**Why:** The `.ksy` is an *independent* declarative encoding of the same
+protocol the Java client implements imperatively, which makes it a strong
+cross-check — but it describes bytes, not behavior, so it complements the Java
+source rather than replacing it. Prose docs (including infinispan.org) drift.
+The Step 10 metadata plan was validated against the schema (opcodes,
+`entry_metadata`, `get_with_metadata_response`).
+**Alternatives:** Treat the schema as the single source of truth (rejected — it
+doesn't capture semantics); rely on prose protocol docs (known to drift).

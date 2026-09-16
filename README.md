@@ -142,7 +142,13 @@ ctest --output-on-failure
 > 📌 **Live status lives in [docs/STATUS.md](docs/STATUS.md)** — start there after any break.
 > Design rationale is in [docs/DECISIONS.md](docs/DECISIONS.md).
 
-**Current Progress**: Steps 0-12 COMPLETE ✅ - Full CRUD + Hash-Aware Routing! See [PROGRESS.md](PROGRESS.md)
+**Current Progress**: Full CRUD (PING/GET/PUT/REMOVE) + SCRAM auth + topology
+awareness + hash-aware routing + async multiplexing — all shipped. **Next:**
+metadata / version-based operations (Step 10). See [docs/STATUS.md](docs/STATUS.md)
+for live status and [PROGRESS.md](PROGRESS.md) for the per-step history.
+
+_(Step numbers follow [`../hotrod-foundry/ROADMAP.md`](../hotrod-foundry/ROADMAP.md);
+`PROGRESS.md` is authoritative for which steps are done — not any headline count.)_
 
 **Test Results** (verified 2026-09-16):
 - Unit Tests: **145/145 passing** ✅
@@ -203,11 +209,17 @@ for (int i = 0; i < 1000; i++) {
 ```
 
 ### Future
-- GET_WITH_METADATA (Step 10)
-- Version-based operations (REPLACE_IF_UNMODIFIED)
-- SCRAM-SHA-256 authentication (Step 11)
-- TLS/SSL support
-- Bulk operations
+
+> 👉 **The full, authoritative backlog lives in
+> [docs/STATUS.md → 📋 Backlog](docs/STATUS.md#-backlog-the-whole-list)**, and
+> the 1–3 immediate items in
+> [⏭ Next steps](docs/STATUS.md#-next-steps-start-here). This is just a summary.
+
+- **Step 10 — Metadata / version-based operations** (next): `getWithMetadata`,
+  `replaceWithVersion`, `removeWithVersion`, `putIfAbsent`, `containsKey`
+- **Step 11 — Error handling**: ERROR response parsing, exception hierarchy, retries
+- **Step 12 — Bulk operations**: `GET_ALL`, `PUT_ALL`, `BULK_GET`
+- Also: multiplexing benchmarks, TLS/SSL support
 
 ## Project Structure
 
@@ -248,11 +260,16 @@ cpp17-client/
 
 ## Development
 
+> 🔁 **Working on this project?** Read [docs/WORKFLOW.md](docs/WORKFLOW.md) — the
+> per-session workflow (how to re-orient after a break, what to update before you
+> stop, and which protocol sources are authoritative). It's built for
+> intermittent, solo work.
+
 This implementation follows the **hotrod-foundry** incremental approach:
 
 1. **Test-driven development** - Test vectors → Unit tests → Implementation
-2. **Java reference** - Study Java implementation for each step (MANDATORY)
-3. **Byte-level validation** - Compare with test vectors
+2. **Java reference** - Study Java implementation for each step (MANDATORY) — it is the authoritative source for **behavior and semantics** (what each op does, statuses, edge cases)
+3. **Byte-level validation** - Compare with test vectors and the Kaitai wire-format schema (authoritative for **byte layout**); if the two disagree, stop and investigate
 4. **Cross-platform** - Linux + Windows support required
 5. **Infrastructure-first** - Steps 0-5 (foundation), then operations
 
@@ -262,14 +279,19 @@ See [hotrod-foundry/ROADMAP.md](../hotrod-foundry/ROADMAP.md) for the complete s
 
 ### Java Reference
 
-Located at: `/home/rigazilla/git/infinispan/client/hotrod-client/`
+The **authoritative source for protocol behavior and semantics** — study it
+first for each step (see workflow above).
+
+- Local: `/home/rigazilla/git/infinispan/client/hotrod-client/`
+- Public: https://github.com/infinispan/infinispan/tree/main/client/hotrod-client
 
 ## References
 
 - **Infinispan Project**: https://infinispan.org/
 - **Hot Rod Foundry**: ../hotrod-foundry/
-- **Java Client Source**: /home/rigazilla/git/infinispan/
+- **Java Client Source** (authoritative for behavior/semantics): local `/home/rigazilla/git/infinispan/client/hotrod-client/` · public https://github.com/infinispan/infinispan/tree/main/client/hotrod-client
 - **Protocol Specification**: https://infinispan.org/docs/stable/titles/hotrod_protocol/
+- **Wire-format schema (Kaitai, protocol 4.0/4.1)**: https://github.com/rigazilla/hotrod-dissector/tree/main/schemas — an independent, machine-readable encoding of the protocol; use it to double-check byte layouts against the Java client.
 
 ## License
 
@@ -277,9 +299,10 @@ Apache 2.0 (matching Infinispan project)
 
 ## Contributing
 
-Following the hotrod-foundry porting guidelines:
+**Start with [docs/WORKFLOW.md](docs/WORKFLOW.md)** — the per-session workflow.
+In short, following the hotrod-foundry porting guidelines:
 - One step at a time (complete step N before step N+1)
-- Update [docs/STATUS.md](docs/STATUS.md) at the end of each session (next steps + date)
+- Update [docs/STATUS.md](docs/STATUS.md) before you stop each session (next steps + date)
 - Log design decisions in [docs/DECISIONS.md](docs/DECISIONS.md) as you make them
 - Validate against test vectors
 - Ensure cross-platform compatibility
@@ -291,7 +314,7 @@ Following the hotrod-foundry porting guidelines:
 - ✅ **v0.3.0** (2026-06-12): GET operation complete (Step 7)
 - ✅ **v0.4.0** (2026-06-12): PUT operation complete (Step 8)
 - ✅ **v0.5.0** (2026-06-12): REMOVE operation complete (Step 9) - **Full CRUD!**
-- ✅ **v0.6.0** (2026-06-17): Topology awareness (Step 12)
+- ✅ **v0.6.0** (2026-06-17): Topology awareness (Step 4)
 - ✅ **v0.7.0** (2026-06-17): Hash-aware routing with failover - **Smart Client!**
 - 🎯 **v0.8.0** (upcoming): Metadata operations (Step 10)
 
