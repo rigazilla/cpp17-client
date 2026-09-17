@@ -70,6 +70,7 @@ if(GTest_FOUND)
         tests/unit/ConsistentHashTest.cpp
         tests/unit/PingTest.cpp
         tests/unit/GetTest.cpp
+        tests/unit/GetWithMetadataTest.cpp
         tests/unit/PutTest.cpp
         tests/unit/RemoveTest.cpp
         tests/unit/HashAwareRoutingTest.cpp
@@ -103,6 +104,10 @@ if(GTest_FOUND)
         tests/integration/GetIntegrationTest.cpp
     )
 
+    add_executable(getwithmetadata_integration_tests
+        tests/integration/GetWithMetadataIntegrationTest.cpp
+    )
+
     add_executable(put_integration_tests
         tests/integration/PutIntegrationTest.cpp
     )
@@ -129,6 +134,13 @@ if(GTest_FOUND)
     )
 
     target_link_libraries(get_integration_tests
+        PRIVATE
+            hotrod-client
+            GTest::gtest
+            # Note: NOT gtest_main - we provide our own main()
+    )
+
+    target_link_libraries(getwithmetadata_integration_tests
         PRIVATE
             hotrod-client
             GTest::gtest
@@ -189,6 +201,7 @@ if(GTest_FOUND)
 
     add_test(NAME PingIntegrationTests COMMAND ping_integration_tests)
     add_test(NAME GetIntegrationTests COMMAND get_integration_tests)
+    add_test(NAME GetWithMetadataIntegrationTests COMMAND getwithmetadata_integration_tests)
     add_test(NAME PutIntegrationTests COMMAND put_integration_tests)
     add_test(NAME RemoveIntegrationTests COMMAND remove_integration_tests)
     add_test(NAME TopologyIntegrationTests COMMAND topology_integration_tests)
@@ -202,6 +215,10 @@ if(GTest_FOUND)
         LABELS "integration;docker"
     )
     set_tests_properties(GetIntegrationTests PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        LABELS "integration;docker"
+    )
+    set_tests_properties(GetWithMetadataIntegrationTests PROPERTIES
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         LABELS "integration;docker"
     )

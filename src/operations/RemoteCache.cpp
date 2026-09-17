@@ -272,6 +272,64 @@ namespace hotrod
                         });
    }
 
+   std::future<std::optional<EntryWithMetadata>> RemoteCache::getWithMetadata(const ByteArray &key)
+   {
+      // Build request body (just the key) - identical to GET
+      ByteArray requestBody;
+      Codec::writeByteArray(requestBody, key);
+
+      // Define body parser (runs in read thread)
+      auto bodyParser = [](uint8_t status, Connection *conn, uint8_t /*protocolVersion*/, int32_t /*flags*/) -> std::any
+      {
+         if (status == 0x01 || status == 0x02)
+         {
+            // Key not found
+            return {};
+         }
+         if (status != 0x00)
+         {
+            throw std::runtime_error("GET_WITH_METADATA failed with status: " + std::to_string(status));
+         }
+
+         // On success the body is: entry_metadata (flag + optional expiration + version)
+         // followed by the value as lp_bytes.
+         EntryWithMetadata entry;
+         entry.metadata = conn->receiveMetadata();
+         entry.value = conn->receiveByteArray();
+         return entry;
+      };
+
+      // Select connection (hash-aware routing or default)
+      MultiplexedConnection *conn = selectServerForKey(key);
+
+      // Execute and get Response future
+      auto responseFuture = conn->execute(
+          requestBody,
+          0x1B, // GET_WITH_METADATA_REQUEST
+          0x1C, // GET_WITH_METADATA_RESPONSE
+          bodyParser,
+          cacheName_);
+
+      // Transform Response → std::optional<EntryWithMetadata>
+      return std::async(std::launch::deferred,
+                        [responseFuture = std::move(responseFuture)]() mutable -> std::optional<EntryWithMetadata>
+                        {
+                           Response resp = responseFuture.get();
+
+                           if (resp.error)
+                           {
+                              std::rethrow_exception(resp.error);
+                           }
+
+                           if (resp.status == 0x00 && resp.body.has_value())
+                           {
+                              return std::any_cast<EntryWithMetadata>(resp.body);
+                           }
+
+                           return std::nullopt;
+                        });
+   }
+
    std::future<std::optional<EntryWithMetadata>> RemoteCache::put(const ByteArray &key, const ByteArray &value,
                                                           uint64_t lifespan, uint64_t maxIdle, bool previousValue)
    {

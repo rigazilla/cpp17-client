@@ -4,7 +4,7 @@
 > If any other doc disagrees with this file, this file wins. Point-in-time
 > snapshots live in [`archive/`](archive/) and are historical only.
 >
-> **Last updated:** 2026-09-16
+> **Last updated:** 2026-09-17
 
 ---
 
@@ -28,10 +28,11 @@ _(Full per-session workflow: [`WORKFLOW.md`](WORKFLOW.md).)_
 
 _The 1–3 concrete things to do next. Keep this short and current._
 
-1. **Step 10 — Metadata operations** (version-based ops): the only remaining
-   feature gap toward core parity with the Java client. Start with
-   `getWithMetadata` — see the step-by-step plan in
-   [Plan: metadata operations](#plan-metadata-operations-step-10) below.
+1. **Step 10 — Metadata operations, continued.** `getWithMetadata` (0x1B/0x1C)
+   is now **shipped** (see "Working and shipped"). Next in the recommended
+   order: **`removeWithVersion`** (0x0D/0x0E), then `replaceWithVersion`
+   (0x09/0x0A), then the conditionals `putIfAbsent`/`replace`/`containsKey`.
+   Version now comes from `getWithMetadata().get()->metadata.version`.
 2. **Benchmark the multiplexing path** — the async rewrite targets 5–10×
    concurrent throughput; this has not been measured yet.
 3. **Small cleanup:** read header "other params" when `paramCount > 0`
@@ -47,11 +48,13 @@ pull from here next. Step numbers follow
 is authoritative for what's done._
 
 **Remaining roadmap steps:**
-- [ ] **Step 10 — Metadata operations** (version-based CAS). Deliverables:
-  `getWithMetadata` (0x1B), `replaceWithVersion`/REPLACE_IF_UNMODIFIED (0x09),
-  and the natural companions `removeWithVersion` (0x0D), `putIfAbsent` (0x05),
-  `replace` (0x07), `containsKey` (0x0F). Java ref:
-  `GetWithMetadataOperation`, `ReplaceIfUnmodifiedOperation`. See the
+- **Step 10 — Metadata operations** (version-based CAS). Deliverables:
+  - [x] `getWithMetadata` (0x1B/0x1C) — **shipped 2026-09-17** (8 unit + 7 integration tests)
+  - [ ] `replaceWithVersion`/REPLACE_IF_UNMODIFIED (0x09/0x0A)
+  - [ ] `removeWithVersion` (0x0D/0x0E)
+  - [ ] `putIfAbsent` (0x05/0x06), `replace` (0x07/0x08), `containsKey` (0x0F/0x10)
+
+  Java ref: `GetWithMetadataOperation`, `ReplaceIfUnmodifiedOperation`. See the
   [step-by-step plan](#plan-metadata-operations-step-10) below.
 - [ ] **Step 11 — Error handling.** ERROR response parsing (opcode 0x50),
   length-prefixed error message extraction, an exception hierarchy, and retry
@@ -89,17 +92,20 @@ multiplexing. See "Working and shipped" below and `PROGRESS.md`._
 - Hash-aware routing → primary owner, with automatic failover
 - Connection pooling (one connection per server)
 - **Full CRUD:** PING / GET / PUT / REMOVE
+- **getWithMetadata** (0x1B/0x1C) — value + entry version/expiration metadata,
+  the entry point for version-based CAS (Step 10)
 - **Async API:** all operations return `std::future` / `std::optional`
 - **MultiplexedConnection:** true async — dedicated read-loop thread,
   `messageId → promise` pending map, `execute()` used by all four operations.
   _(The July "70% / temporary blocking" docs are obsolete — see archive note.)_
 - Multi-server topology test fixtures + Docker-based integration tests
 
-**Test status (verified by full run, 2026-09-16):**
-- Unit: **145/145** passing (`./build/unit_tests`, <1s)
-- Integration: **46/46** passing across 8 suites (`ctest`, ~287s, spins up
-  Docker Infinispan single-server + multi-node clusters)
-- Full run: `ctest --test-dir build --output-on-failure` → 100% pass (9/9 ctest targets)
+**Test status (verified 2026-09-17):**
+- Unit: **153/153** passing (`./build/unit_tests`, <1s)
+- Integration: **53/53** passing across 9 suites (`ctest`, spins up Docker
+  Infinispan single-server + multi-node clusters). New
+  `GetWithMetadataIntegrationTests` suite (7 tests) verified green (~10s).
+- Full run: `ctest --test-dir build --output-on-failure` → 100% pass (10 ctest targets)
 
 **Not started / open:** see [📋 Backlog](#-backlog-the-whole-list) above for the
 full list (Steps 10–12, benchmarks, TLS, code TODOs).
@@ -151,7 +157,7 @@ on 2026-09-16. That `.ksy` is the wire-format source of truth for protocol
 | **removeWithVersion** (removeIfUnmodified) | **0x0D** | **0x0E** | ❌ |
 | containsKey | 0x0F | 0x10 | ❌ |
 | getWithVersion | 0x11 | 0x12 | ❌ |
-| **getWithMetadata** | **0x1B** | **0x1C** | ❌ |
+| **getWithMetadata** | **0x1B** | **0x1C** | ✅ |
 
 Opcode constants are defined in `include/hotrod/HeaderCodec.h` (`Opcodes`
 namespace) — currently only PUT/GET/REMOVE/PING. Add the new ones there.
@@ -159,8 +165,8 @@ namespace) — currently only PUT/GET/REMOVE/PING. Add the new ones there.
 ### Recommended order
 `getWithMetadata` first (it yields the entry version), then the two
 version-based writes that depend on it, then the simpler conditionals:
-1. **getWithMetadata** (0x1B/0x1C) ← next session
-2. removeWithVersion (0x0D/0x0E)
+1. ~~**getWithMetadata** (0x1B/0x1C)~~ ✅ shipped 2026-09-17
+2. removeWithVersion (0x0D/0x0E) ← next session
 3. replaceWithVersion (0x09/0x0A)
 4. putIfAbsent (0x05/0x06), replace (0x07/0x08), containsKey (0x0F/0x10)
 

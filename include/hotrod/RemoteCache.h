@@ -100,7 +100,28 @@ public:
     std::future<std::optional<EntryWithMetadata>> put(const ByteArray &key, const ByteArray &value,
                                                       uint64_t lifespan = 0, uint64_t maxIdle = 0, bool previousValue = false);
 
-    const std::future<std::optional<hotrod::EntryWithMetadata>> &example(uint8_t status, uint8_t protocolVersion, hotrod::Connection *conn);
+    /**
+     * GET_WITH_METADATA operation - retrieve value plus entry metadata.
+     *
+     * Opcode: 0x1B (GET_WITH_METADATA_REQUEST) → 0x1C (GET_WITH_METADATA_RESPONSE)
+     *
+     * Unlike get(), this returns the entry version (for optimistic locking /
+     * version-based CAS operations) and expiration metadata alongside the value.
+     *
+     * @param key The key as raw bytes
+     * @return Future with optional<EntryWithMetadata>: entry if found, nullopt if not found
+     * @throws std::runtime_error on communication errors (via future.get())
+     *
+     * Usage:
+     *   if (auto entry = cache.getWithMetadata(key).get()) {
+     *       ByteArray& value = entry->value;
+     *       int64_t version = entry->metadata.version;  // for replaceWithVersion, etc.
+     *   }
+     *
+     * Reference:
+     * - Java: org.infinispan.client.hotrod.impl.operations.GetWithMetadataOperation
+     */
+    std::future<std::optional<EntryWithMetadata>> getWithMetadata(const ByteArray& key);
 
     /**
      * REMOVE operation - delete key-value pair.
