@@ -4,7 +4,7 @@
 > If any other doc disagrees with this file, this file wins. Point-in-time
 > snapshots live in [`archive/`](archive/) and are historical only.
 >
-> **Last updated:** 2026-09-17
+> **Last updated:** 2026-09-18
 
 ---
 
@@ -99,13 +99,24 @@ multiplexing. See "Working and shipped" below and `PROGRESS.md`._
   `messageId → promise` pending map, `execute()` used by all four operations.
   _(The July "70% / temporary blocking" docs are obsolete — see archive note.)_
 - Multi-server topology test fixtures + Docker-based integration tests
+- **CI runs integration tests on Linux** (Ubuntu job) as of 2026-09-18 — the
+  `ubuntu-latest` runner's host Docker daemon starts the Infinispan containers.
+  Windows and Fedora stay unit-only (Fedora runs inside a container with no
+  Docker daemon; Windows doesn't build the integration tests). Windows/MSVC
+  portability and `-Werror` build parity also landed (Sept 2026).
 
-**Test status (verified 2026-09-17):**
+**Test status (verified 2026-09-18):**
 - Unit: **153/153** passing (`./build/unit_tests`, <1s)
 - Integration: **53/53** passing across 9 suites (`ctest`, spins up Docker
-  Infinispan single-server + multi-node clusters). New
-  `GetWithMetadataIntegrationTests` suite (7 tests) verified green (~10s).
+  Infinispan single-server + multi-node clusters), now also green on Linux CI.
+  The interlaced distributed tests (`ConcurrentMultiServerTest`) were fixed to
+  tolerate a GET racing ahead of its PUT — a `nullopt` is expected, only a
+  present-but-wrong value is an error.
 - Full run: `ctest --test-dir build --output-on-failure` → 100% pass (10 ctest targets)
+- **Local caveat:** the multi-node cluster suites bind fixed host ports
+  `11222/11322/11422/11522`; free `11222` (e.g. stop the `memory-service`
+  Infinispan) before running them locally, or they fail with "port is already
+  allocated". CI runners have these ports free.
 
 **Not started / open:** see [📋 Backlog](#-backlog-the-whole-list) above for the
 full list (Steps 10–12, benchmarks, TLS, code TODOs).
