@@ -20,6 +20,12 @@ public:
     static void writeVLong(ByteArray& buffer, VLong value);
     static VLong readVLong(const ByteArray& buffer, size_t& offset);
 
+    // Fixed-width signed 64-bit encoding (8 bytes, big-endian).
+    // Used for entry versions (matches Java ByteBuf.writeLong / readLong and
+    // the big-endian s8 read in Connection::receiveMetadata).
+    static void writeLong(ByteArray& buffer, int64_t value);
+    static int64_t readLong(const ByteArray& buffer, size_t& offset);
+
     // String encoding (vInt length + UTF-8 bytes)
     static void writeString(ByteArray& buffer, const std::string& value);
     static std::string readString(const ByteArray& buffer, size_t& offset);

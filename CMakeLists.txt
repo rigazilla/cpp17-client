@@ -83,6 +83,7 @@ if(GTest_FOUND)
         tests/unit/GetWithMetadataTest.cpp
         tests/unit/PutTest.cpp
         tests/unit/RemoveTest.cpp
+        tests/unit/RemoveWithVersionTest.cpp
         tests/unit/HashAwareRoutingTest.cpp
     )
 
@@ -130,6 +131,10 @@ if(GTest_FOUND)
         tests/integration/RemoveIntegrationTest.cpp
     )
 
+    add_executable(removewithversion_integration_tests
+        tests/integration/RemoveWithVersionIntegrationTest.cpp
+    )
+
     # Topology integration tests (multi-server cluster)
     add_executable(topology_integration_tests
         tests/integration/TopologyChangeTest.cpp
@@ -169,6 +174,13 @@ if(GTest_FOUND)
     )
 
     target_link_libraries(remove_integration_tests
+        PRIVATE
+            hotrod-client
+            GTest::gtest
+            # Note: NOT gtest_main - we provide our own main()
+    )
+
+    target_link_libraries(removewithversion_integration_tests
         PRIVATE
             hotrod-client
             GTest::gtest
@@ -218,6 +230,7 @@ if(GTest_FOUND)
     add_test(NAME GetWithMetadataIntegrationTests COMMAND getwithmetadata_integration_tests)
     add_test(NAME PutIntegrationTests COMMAND put_integration_tests)
     add_test(NAME RemoveIntegrationTests COMMAND remove_integration_tests)
+    add_test(NAME RemoveWithVersionIntegrationTests COMMAND removewithversion_integration_tests)
     add_test(NAME TopologyIntegrationTests COMMAND topology_integration_tests)
     add_test(NAME ConcurrentClientsTests COMMAND concurrent_clients_tests)
     add_test(NAME HashAwareRoutingIntegrationTests COMMAND hash_aware_routing_integration_tests)
@@ -241,6 +254,10 @@ if(GTest_FOUND)
         LABELS "integration;docker"
     )
     set_tests_properties(RemoveIntegrationTests PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        LABELS "integration;docker"
+    )
+    set_tests_properties(RemoveWithVersionIntegrationTests PROPERTIES
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         LABELS "integration;docker"
     )

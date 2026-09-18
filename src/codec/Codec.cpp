@@ -65,6 +65,27 @@ VLong Codec::readVLong(const ByteArray& buffer, size_t& offset) {
     return result;
 }
 
+// Fixed-width signed 64-bit encoding (8 bytes, big-endian / most-significant
+// byte first). Mirrors Netty ByteBuf.writeLong() used by the Java client for
+// entry versions and the big-endian s8 read in Connection::receiveMetadata().
+void Codec::writeLong(ByteArray& buffer, int64_t value) {
+    for (int i = 7; i >= 0; i--) {
+        buffer.push_back(static_cast<uint8_t>((value >> (i * 8)) & 0xFF));
+    }
+}
+
+// Fixed-width signed 64-bit decoding (8 bytes, big-endian).
+int64_t Codec::readLong(const ByteArray& buffer, size_t& offset) {
+    if (offset + 8 > buffer.size()) {
+        throw std::runtime_error("readLong: offset out of bounds");
+    }
+    int64_t result = 0;
+    for (int i = 0; i < 8; i++) {
+        result = (result << 8) | buffer[offset++];
+    }
+    return result;
+}
+
 // String encoding (vInt length + UTF-8 bytes)
 // Reference: ByteBufUtil.writeString() lines 31-37
 void Codec::writeString(ByteArray& buffer, const std::string& value) {
