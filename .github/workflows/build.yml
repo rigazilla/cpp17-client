@@ -10,6 +10,9 @@ jobs:
   test-linux:
     name: Linux (Ubuntu)
     runs-on: ubuntu-latest
+    # Integration tests spin up Infinispan Docker containers (single-server
+    # plus multi-node clusters), which can take a few minutes to pull and boot.
+    timeout-minutes: 30
 
     steps:
       - name: Checkout code
@@ -34,9 +37,20 @@ jobs:
       - name: Run unit tests
         run: |
           cd build
-          # Exclude integration tests: they require a running Infinispan
-          # server via Docker, which CI does not provision.
           ctest --output-on-failure -LE integration
+
+      # ubuntu-latest runners provide a running Docker daemon on the host, so
+      # the integration tests (labeled "integration") can start Infinispan
+      # containers via scripts/. This is Linux-only: the Fedora job runs inside
+      # a container with no Docker daemon, and Windows doesn't build these tests.
+      - name: Run integration tests (Docker)
+        run: |
+          cd build
+          ctest --output-on-failure -L integration
+
+      - name: Clean up test containers
+        if: always()
+        run: ./scripts/cleanup_test_containers.sh || true
 
   test-windows:
     name: Windows
