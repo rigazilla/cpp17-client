@@ -1,8 +1,11 @@
 cmake_minimum_required(VERSION 3.15)
 project(hotrod-client-cpp VERSION 0.1.0 LANGUAGES CXX)
 
+# Default to an optimized build (with debug symbols) so local builds surface
+# the same optimizer/-Werror warnings as CI (which builds Release). Override
+# with -DCMAKE_BUILD_TYPE=Debug for an unoptimized, easier-to-step build.
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-    set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Build type" FORCE)
+    set(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING "Build type" FORCE)
 endif()
 
 # C++17 required
@@ -15,6 +18,13 @@ if(MSVC)
     add_compile_options(/W4 /WX)
 else()
     add_compile_options(-Wall -Wextra -Werror -pedantic)
+    # Enable _FORTIFY_SOURCE on optimized builds so glibc's fortified
+    # warnings (e.g. warn_unused_result on system()) fire locally, matching
+    # CI on distros that don't auto-enable it. It requires optimization, so
+    # skip Debug (-O0); -U avoids redefinition warnings on distros that
+    # already predefine it.
+    add_compile_options($<$<NOT:$<CONFIG:Debug>>:-U_FORTIFY_SOURCE>
+                        $<$<NOT:$<CONFIG:Debug>>:-D_FORTIFY_SOURCE=2>)
 endif()
 
 # Find dependencies

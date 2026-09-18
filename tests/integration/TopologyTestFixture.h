@@ -1,5 +1,6 @@
 #pragma once
 
+#include <tuple>
 #include <gtest/gtest.h>
 #include "MultiServerTestEnvironment.h"
 #include "hotrod/RemoteCache.h"
@@ -189,7 +190,7 @@ protected:
                          " bash -c \"echo 'create cache --template=org.infinispan.DIST_SYNC " +
                          std::string(TEST_CACHE) +
                          "' | /opt/infinispan/bin/cli.sh -c http://localhost:11222\" >/dev/null 2>&1";
-        system(cmd.c_str());
+        std::ignore = system(cmd.c_str());
     }
 
     /**
@@ -203,7 +204,7 @@ protected:
                              "'http://" + server.host + ":" + std::to_string(server.port) +
                              "/rest/v3/caches/" + std::string(TEST_CACHE) + "/_clear' "
                              "2>/dev/null";
-            system(cmd.c_str());
+            std::ignore = system(cmd.c_str());
         }
     }
 

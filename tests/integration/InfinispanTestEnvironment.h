@@ -1,5 +1,6 @@
 #pragma once
 
+#include <tuple>
 #include <gtest/gtest.h>
 #include <string>
 #include <fstream>
@@ -65,7 +66,7 @@ public:
     void TearDown() override {
         // Stop and remove container (hide stdout, show stderr)
         std::string cmd = "./scripts/stop_infinispan.sh " + containerID + " >/dev/null";
-        system(cmd.c_str());
+        std::ignore = system(cmd.c_str());
     }
 };
 

@@ -461,7 +461,7 @@ TEST_F(HashAwareRoutingIntegrationTest, TopologyRebalanceUpdatesRouting)
       ByteArray key(keyStr.begin(), keyStr.end());
       ByteArray value;
 
-      bool found;
+      bool found = false;
       // Retry a few times in case rebalance still ongoing
       for (int attempt = 0; attempt < 3; attempt++)
       {
