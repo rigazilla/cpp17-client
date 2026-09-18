@@ -171,6 +171,36 @@ public:
     std::future<bool> removeWithVersion(const ByteArray& key, int64_t version);
 
     /**
+     * REPLACE_WITH_VERSION operation - version-based conditional replace (CAS).
+     *
+     * Replaces the entry's value only if its current version matches `version`
+     * (obtained from a prior getWithMetadata() call).
+     *
+     * Opcode: 0x09 (REPLACE_WITH_VERSION_REQUEST) → 0x0A (RESPONSE)
+     *
+     * @param key The key as raw bytes
+     * @param value The new value as raw bytes
+     * @param version Expected entry version (from getWithMetadata().metadata.version)
+     * @param lifespan Lifespan in seconds (0 = server default / infinite)
+     * @param maxIdle Max idle in seconds (0 = server default / infinite)
+     * @return Future<bool>: true if the entry was replaced; false if the version
+     *         did not match (entry modified) or the key did not exist
+     * @throws std::runtime_error on communication errors or unexpected status
+     *         (via future.get())
+     *
+     * Usage:
+     *   if (auto entry = cache.getWithMetadata(key).get()) {
+     *       bool replaced = cache.replaceWithVersion(key, newValue,
+     *                                                entry->metadata.version).get();
+     *   }
+     *
+     * Reference:
+     * - Java: org.infinispan.client.hotrod.impl.operations.ReplaceIfUnmodifiedOperation
+     */
+    std::future<bool> replaceWithVersion(const ByteArray& key, const ByteArray& value,
+                                         int64_t version, uint64_t lifespan = 0, uint64_t maxIdle = 0);
+
+    /**
      * Close connection to server.
      */
     void disconnect();

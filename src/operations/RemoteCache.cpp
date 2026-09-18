@@ -516,6 +516,77 @@ namespace hotrod
                         });
    }
 
+   std::future<bool> RemoteCache::replaceWithVersion(const ByteArray &key, const ByteArray &value,
+                                                     int64_t version, uint64_t lifespan, uint64_t maxIdle)
+   {
+      // Build REPLACE_WITH_VERSION request body:
+      //   key (lp_bytes) + time_units (u1) + [lifespan vLong] + [maxIdle vLong]
+      //   + version (8-byte big-endian s8) + value (lp_bytes)
+      // Mirrors Java ReplaceIfUnmodifiedOperation, which writes the *same*
+      // expiration params as PUT, then buf.writeLong(version), then the value.
+      //
+      // NOTE: The expiration byte packs the lifespan time unit in the HIGH
+      // nibble and maxIdle in the LOW nibble (Java TimeUnitParam.encodeTimeUnits:
+      // (encodedLifespan << 4) | encodedMaxIdle), identical to put(). The
+      // hotrod40.ksy `replace_if_unmodified_request` has these nibbles flipped;
+      // that is a schema bug — Java (authoritative) uses one shared encoder for
+      // both PUT and replaceWithVersion.
+      ByteArray requestBody;
+      Codec::writeByteArray(requestBody, key);
+
+      uint8_t timeUnits = 0;
+      timeUnits |= (lifespan == 0 ? 0x07 : 0x00) << 4;  // high nibble: lifespan
+      timeUnits |= (maxIdle == 0 ? 0x07 : 0x00);        // low nibble: maxIdle
+      requestBody.push_back(timeUnits);
+      if (lifespan > 0)
+         Codec::writeVLong(requestBody, lifespan);
+      if (maxIdle > 0)
+         Codec::writeVLong(requestBody, maxIdle);
+
+      Codec::writeLong(requestBody, version);
+      Codec::writeByteArray(requestBody, value);
+
+      // Status codes (see Java VersionedOperationResponse.RspCode):
+      // 0x00 = SUCCESS (replaced)                        -> true
+      // 0x01 = NOT_EXECUTED (version mismatch/modified)  -> false
+      // 0x02 = KEY_DOES_NOT_EXIST                        -> false
+      // 0x03 = SUCCESS_WITH_PREVIOUS                     -> true  (body present)
+      // 0x04 = NOT_EXECUTED_WITH_PREVIOUS                -> false (body present)
+      // The *_WITH_PREVIOUS variants only occur when FORCE_RETURN_VALUE is set
+      // (not yet exposed). We drain their body defensively so the shared read
+      // loop stays byte-aligned if that flag is added later.
+      auto bodyParser = [](uint8_t status, Connection *conn, uint8_t /*protocolVersion*/, int32_t /*flags*/) -> std::any
+      {
+         if (status == 0x03 || status == 0x04)
+         {
+            EntryWithMetadata entry;
+            entry.metadata = conn->receiveMetadata();
+            entry.value = conn->receiveByteArray();
+            return entry;
+         }
+         if (status == 0x00 || status == 0x01 || status == 0x02)
+         {
+            return {};
+         }
+         throw std::runtime_error("REPLACE_WITH_VERSION failed with status: " + std::to_string(status));
+      };
+
+      // Execute
+      MultiplexedConnection *conn = selectServerForKey(key);
+      auto responseFuture = conn->execute(requestBody, 0x09, 0x0A, bodyParser, cacheName_);
+
+      // Transform Response → bool (replaced?). Success is 0x00 or 0x03, matching
+      // Java's HotRodConstants.isSuccess / RspCode.isUpdated().
+      return std::async(std::launch::deferred,
+                        [responseFuture = std::move(responseFuture)]() mutable -> bool
+                        {
+                           Response resp = responseFuture.get();
+                           if (resp.error)
+                              std::rethrow_exception(resp.error);
+                           return resp.status == 0x00 || resp.status == 0x03;
+                        });
+   }
+
    MultiplexedConnection *RemoteCache::selectServerForKey(const ByteArray &key)
    {
       // If hash-aware routing is enabled and hash topology is available
