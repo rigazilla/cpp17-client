@@ -34,7 +34,9 @@ jobs:
       - name: Run unit tests
         run: |
           cd build
-          ctest --output-on-failure
+          # Exclude integration tests: they require a running Infinispan
+          # server via Docker, which CI does not provision.
+          ctest --output-on-failure -LE integration
 
   test-windows:
     name: Windows
@@ -44,10 +46,23 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      # vcpkg's x-gha binary cache (enabled by run-vcpkg) needs these two
+      # runtime variables exported to the shell; they're available to Actions
+      # internals but not to subsequent run steps unless exported here.
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
         with:
-          vcpkgGitCommitId: 'a42af01b72c28a8e1d7b48107b33e4f286a55ef6'
+          # Pin to a recent vcpkg release (2026.07.29). Older baselines
+          # reference MSYS2 packages (e.g. pkgconf) that the mirrors have
+          # since deleted, causing 404s during vcpkg_fixup_pkgconfig.
+          vcpkgGitCommitId: 'c76c06644034521fb761a39f8f52d8e87d1103d5'
 
       - name: Install dependencies
         run: |
@@ -67,7 +82,9 @@ jobs:
       - name: Run unit tests
         run: |
           cd build
-          ctest -C Release --output-on-failure
+          # Exclude integration tests: they require a running Infinispan
+          # server via Docker, which CI does not provision.
+          ctest -C Release --output-on-failure -LE integration
 
   test-fedora:
     name: Linux (Fedora)
@@ -96,4 +113,6 @@ jobs:
       - name: Run unit tests
         run: |
           cd build
-          ctest --output-on-failure
+          # Exclude integration tests: they require a running Infinispan
+          # server via Docker, which CI does not provision.
+          ctest --output-on-failure -LE integration
