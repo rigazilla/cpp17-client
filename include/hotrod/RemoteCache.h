@@ -146,6 +146,31 @@ public:
     std::future<std::optional<EntryWithMetadata>> remove(const ByteArray& key, bool previousValue = false);
 
     /**
+     * REMOVE_WITH_VERSION operation - version-based conditional remove (CAS).
+     *
+     * Removes the entry only if its current version matches `version`. The
+     * version is obtained from a prior getWithMetadata() call.
+     *
+     * Opcode: 0x0D (REMOVE_WITH_VERSION_REQUEST) → 0x0E (RESPONSE)
+     *
+     * @param key The key as raw bytes
+     * @param version Expected entry version (from getWithMetadata().metadata.version)
+     * @return Future<bool>: true if the entry was removed; false if the version
+     *         did not match (entry modified) or the key did not exist
+     * @throws std::runtime_error on communication errors or unexpected status
+     *         (via future.get())
+     *
+     * Usage:
+     *   if (auto entry = cache.getWithMetadata(key).get()) {
+     *       bool removed = cache.removeWithVersion(key, entry->metadata.version).get();
+     *   }
+     *
+     * Reference:
+     * - Java: org.infinispan.client.hotrod.impl.operations.RemoveIfUnmodifiedOperation
+     */
+    std::future<bool> removeWithVersion(const ByteArray& key, int64_t version);
+
+    /**
      * Close connection to server.
      */
     void disconnect();

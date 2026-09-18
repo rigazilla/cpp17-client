@@ -466,6 +466,56 @@ namespace hotrod
                         });
    }
 
+   std::future<bool> RemoteCache::removeWithVersion(const ByteArray &key, int64_t version)
+   {
+      // Build REMOVE_WITH_VERSION request body: key (lp_bytes) + version (8-byte
+      // big-endian s8). Mirrors Java RemoveIfUnmodifiedOperation which appends
+      // buf.writeLong(version) after the key.
+      ByteArray requestBody;
+      Codec::writeByteArray(requestBody, key);
+      Codec::writeLong(requestBody, version);
+
+      // Status codes (see Java VersionedOperationResponse.RspCode):
+      // 0x00 = SUCCESS (removed)                         -> true
+      // 0x01 = NOT_EXECUTED (version mismatch/modified)  -> false
+      // 0x02 = KEY_DOES_NOT_EXIST                        -> false
+      // 0x03 = SUCCESS_WITH_PREVIOUS                     -> true  (body present)
+      // 0x04 = NOT_EXECUTED_WITH_PREVIOUS                -> false (body present)
+      // The *_WITH_PREVIOUS variants only occur when FORCE_RETURN_VALUE is set
+      // (not yet exposed). We drain their body defensively so the shared read
+      // loop stays byte-aligned if that flag is added later.
+      auto bodyParser = [](uint8_t status, Connection *conn, uint8_t /*protocolVersion*/, int32_t /*flags*/) -> std::any
+      {
+         if (status == 0x03 || status == 0x04)
+         {
+            EntryWithMetadata entry;
+            entry.metadata = conn->receiveMetadata();
+            entry.value = conn->receiveByteArray();
+            return entry;
+         }
+         if (status == 0x00 || status == 0x01 || status == 0x02)
+         {
+            return {};
+         }
+         throw std::runtime_error("REMOVE_WITH_VERSION failed with status: " + std::to_string(status));
+      };
+
+      // Execute
+      MultiplexedConnection *conn = selectServerForKey(key);
+      auto responseFuture = conn->execute(requestBody, 0x0D, 0x0E, bodyParser, cacheName_);
+
+      // Transform Response → bool (removed?). Success is 0x00 or 0x03, matching
+      // Java's HotRodConstants.isSuccess / RspCode.isUpdated().
+      return std::async(std::launch::deferred,
+                        [responseFuture = std::move(responseFuture)]() mutable -> bool
+                        {
+                           Response resp = responseFuture.get();
+                           if (resp.error)
+                              std::rethrow_exception(resp.error);
+                           return resp.status == 0x00 || resp.status == 0x03;
+                        });
+   }
+
    MultiplexedConnection *RemoteCache::selectServerForKey(const ByteArray &key)
    {
       // If hash-aware routing is enabled and hash topology is available
