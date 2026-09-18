@@ -34,6 +34,8 @@ namespace Opcode {
     const uint8_t GET_RESPONSE = 0x04;
     const uint8_t REMOVE_REQUEST = 0x0B;
     const uint8_t REMOVE_RESPONSE = 0x0C;
+    const uint8_t GET_WITH_METADATA_REQUEST = 0x1B;
+    const uint8_t GET_WITH_METADATA_RESPONSE = 0x1C;
     const uint8_t PING_REQUEST = 0x17;
     const uint8_t PING_RESPONSE = 0x18;
     const uint8_t AUTH_MECH_LIST_REQUEST = 0x21;

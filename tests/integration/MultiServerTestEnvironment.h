@@ -1,5 +1,6 @@
 #pragma once
 
+#include <tuple>
 #include <gtest/gtest.h>
 #include <string>
 #include <vector>
@@ -79,11 +80,11 @@ public:
     static void cleanupLeftoverContainers() {
         // Remove all ispn-node containers (running or stopped)
         std::string cleanupCmd = "docker rm -f $(docker ps -aq --filter \"name=ispn-node\") 2>/dev/null || true";
-        system(cleanupCmd.c_str());
+        std::ignore = system(cleanupCmd.c_str());
 
         // Clean up any stale hotrod-test networks
         std::string networkCleanup = "docker network ls --filter \"name=hotrod-test\" -q 2>/dev/null | xargs -r docker network rm 2>/dev/null || true";
-        system(networkCleanup.c_str());
+        std::ignore = system(networkCleanup.c_str());
     }
 
     /**
@@ -128,7 +129,7 @@ public:
         }
 
         std::string cmd = "./scripts/stop_cluster.sh " + clusterID;
-        system(cmd.c_str());
+        std::ignore = system(cmd.c_str());
 
         servers.clear();
         clusterID.clear();
@@ -156,7 +157,7 @@ public:
 
         if (result != 0) {
             fprintf(stderr, "[ERROR] Script failed! Showing /tmp/node-add-env.sh:\n");
-            system("cat /tmp/node-add-env.sh >&2");
+            std::ignore = system("cat /tmp/node-add-env.sh >&2");
             throw std::runtime_error("Failed to add node " + std::to_string(nodeNumber));
         }
 

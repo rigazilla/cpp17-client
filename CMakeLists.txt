@@ -1,8 +1,11 @@
 cmake_minimum_required(VERSION 3.15)
 project(hotrod-client-cpp VERSION 0.1.0 LANGUAGES CXX)
 
+# Default to an optimized build (with debug symbols) so local builds surface
+# the same optimizer/-Werror warnings as CI (which builds Release). Override
+# with -DCMAKE_BUILD_TYPE=Debug for an unoptimized, easier-to-step build.
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-    set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Build type" FORCE)
+    set(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING "Build type" FORCE)
 endif()
 
 # C++17 required
@@ -15,6 +18,13 @@ if(MSVC)
     add_compile_options(/W4 /WX)
 else()
     add_compile_options(-Wall -Wextra -Werror -pedantic)
+    # Enable _FORTIFY_SOURCE on optimized builds so glibc's fortified
+    # warnings (e.g. warn_unused_result on system()) fire locally, matching
+    # CI on distros that don't auto-enable it. It requires optimization, so
+    # skip Debug (-O0); -U avoids redefinition warnings on distros that
+    # already predefine it.
+    add_compile_options($<$<NOT:$<CONFIG:Debug>>:-U_FORTIFY_SOURCE>
+                        $<$<NOT:$<CONFIG:Debug>>:-D_FORTIFY_SOURCE=2>)
 endif()
 
 # Find dependencies
@@ -70,6 +80,7 @@ if(GTest_FOUND)
         tests/unit/ConsistentHashTest.cpp
         tests/unit/PingTest.cpp
         tests/unit/GetTest.cpp
+        tests/unit/GetWithMetadataTest.cpp
         tests/unit/PutTest.cpp
         tests/unit/RemoveTest.cpp
         tests/unit/HashAwareRoutingTest.cpp
@@ -94,13 +105,21 @@ if(GTest_FOUND)
     file(COPY ${CMAKE_SOURCE_DIR}/test-configs
          DESTINATION ${CMAKE_BINARY_DIR})
 
-    # Integration tests (require Docker)
+    # Integration tests: they use POSIX APIs (popen/pclose), bash scripts and
+    # Docker to drive a real Infinispan server, so they are only built on
+    # non-Windows platforms. They are excluded from CI ctest runs via the
+    # "integration" label regardless.
+    if(NOT WIN32)
     add_executable(ping_integration_tests
         tests/integration/PingIntegrationTest.cpp
     )
 
     add_executable(get_integration_tests
         tests/integration/GetIntegrationTest.cpp
+    )
+
+    add_executable(getwithmetadata_integration_tests
+        tests/integration/GetWithMetadataIntegrationTest.cpp
     )
 
     add_executable(put_integration_tests
@@ -129,6 +148,13 @@ if(GTest_FOUND)
     )
 
     target_link_libraries(get_integration_tests
+        PRIVATE
+            hotrod-client
+            GTest::gtest
+            # Note: NOT gtest_main - we provide our own main()
+    )
+
+    target_link_libraries(getwithmetadata_integration_tests
         PRIVATE
             hotrod-client
             GTest::gtest
@@ -189,6 +215,7 @@ if(GTest_FOUND)
 
     add_test(NAME PingIntegrationTests COMMAND ping_integration_tests)
     add_test(NAME GetIntegrationTests COMMAND get_integration_tests)
+    add_test(NAME GetWithMetadataIntegrationTests COMMAND getwithmetadata_integration_tests)
     add_test(NAME PutIntegrationTests COMMAND put_integration_tests)
     add_test(NAME RemoveIntegrationTests COMMAND remove_integration_tests)
     add_test(NAME TopologyIntegrationTests COMMAND topology_integration_tests)
@@ -202,6 +229,10 @@ if(GTest_FOUND)
         LABELS "integration;docker"
     )
     set_tests_properties(GetIntegrationTests PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        LABELS "integration;docker"
+    )
+    set_tests_properties(GetWithMetadataIntegrationTests PROPERTIES
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         LABELS "integration;docker"
     )
@@ -229,8 +260,9 @@ if(GTest_FOUND)
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         LABELS "integration;docker;concurrent;multi-server"
     )
+    endif()  # NOT WIN32 (integration tests)
 
-    message(STATUS "Google Test found - unit tests and integration tests enabled")
+    message(STATUS "Google Test found - unit tests enabled (integration tests: non-Windows only)")
 else()
     message(WARNING "Google Test not found - tests disabled")
 endif()

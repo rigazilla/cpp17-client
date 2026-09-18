@@ -37,7 +37,7 @@ namespace hotrod {
 #endif
 
 Connection::Connection(const std::string& host, uint16_t port)
-    : host_(host), port_(port), connected_(false), socket_(-1) {
+    : host_(host), port_(port), connected_(false), socket_(INVALID_SOCK) {
 }
 
 Connection::~Connection() {
@@ -113,7 +113,7 @@ void Connection::connect() {
                 timeout.tv_sec = 5;   // 5 second timeout
                 timeout.tv_usec = 0;
 
-                int selectResult = select(socket_ + 1, nullptr, &writefds, nullptr, &timeout);
+                int selectResult = select(static_cast<int>(socket_ + 1), nullptr, &writefds, nullptr, &timeout);
 
                 if (selectResult > 0) {
                     // Check if connection succeeded
@@ -146,7 +146,7 @@ void Connection::connect() {
 #else
         ::close(socket_);
 #endif
-        socket_ = -1;
+        socket_ = INVALID_SOCK;
     }
 
     freeaddrinfo(result);
@@ -217,7 +217,7 @@ ByteArray Connection::receive(size_t length) {
 }
 
 void Connection::shutdown() {
-    if (!connected_ || socket_ == -1) {
+    if (!connected_ || socket_ == INVALID_SOCK) {
         return;
     }
 
@@ -241,7 +241,7 @@ void Connection::close() {
     ::close(socket_);
 #endif
 
-    socket_ = -1;
+    socket_ = INVALID_SOCK;
     connected_ = false;
 }
 
