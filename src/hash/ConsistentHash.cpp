@@ -72,7 +72,10 @@ int ConsistentHash::getSegment(const ByteArray& key) const {
     //
     // This is equivalent to: segment = (normalizedHash * numSegments) / 2^31
     // Using 64-bit to avoid overflow
-    int segment = (static_cast<int64_t>(normalizedHash) * numSegments_) / (1L << 31);
+    // NOTE: use 1LL (guaranteed >= 64-bit) not 1L: on Windows (LLP64) long is
+    // 32-bit, so 1L << 31 overflows into the sign bit and the divisor becomes
+    // negative, producing negated/zero segments.
+    int segment = static_cast<int>((static_cast<int64_t>(normalizedHash) * numSegments_) / (1LL << 31));
 
     // Extra safety: ensure segment is valid
     if (segment < 0 || segment >= static_cast<int>(segmentOwners_.size())) {

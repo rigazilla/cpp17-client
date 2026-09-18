@@ -105,7 +105,11 @@ if(GTest_FOUND)
     file(COPY ${CMAKE_SOURCE_DIR}/test-configs
          DESTINATION ${CMAKE_BINARY_DIR})
 
-    # Integration tests (require Docker)
+    # Integration tests: they use POSIX APIs (popen/pclose), bash scripts and
+    # Docker to drive a real Infinispan server, so they are only built on
+    # non-Windows platforms. They are excluded from CI ctest runs via the
+    # "integration" label regardless.
+    if(NOT WIN32)
     add_executable(ping_integration_tests
         tests/integration/PingIntegrationTest.cpp
     )
@@ -256,8 +260,9 @@ if(GTest_FOUND)
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         LABELS "integration;docker;concurrent;multi-server"
     )
+    endif()  # NOT WIN32 (integration tests)
 
-    message(STATUS "Google Test found - unit tests and integration tests enabled")
+    message(STATUS "Google Test found - unit tests enabled (integration tests: non-Windows only)")
 else()
     message(WARNING "Google Test not found - tests disabled")
 endif()

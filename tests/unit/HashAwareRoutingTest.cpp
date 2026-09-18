@@ -146,7 +146,9 @@ protected:
         int32_t hash = MurmurHash3::hash32(key, 9001);  // Seed = 9001
         int32_t normalizedHash = hash & 0x7FFFFFFF;  // Ensure positive
         // Java uses division, not modulo (see SegmentConsistentHash.java)
-        return (static_cast<int64_t>(normalizedHash) * numSegments) / (1L << 31);
+        // 1LL (>= 64-bit) not 1L: long is 32-bit on Windows, so 1L << 31
+        // overflows into the sign bit and negates the divisor.
+        return static_cast<int>((static_cast<int64_t>(normalizedHash) * numSegments) / (1LL << 31));
     }
 
     /**

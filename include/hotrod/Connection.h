@@ -6,6 +6,19 @@
 
 namespace hotrod {
 
+// Portable socket handle type. On Windows a SOCKET is an unsigned
+// pointer-sized handle (UINT_PTR); on POSIX it is an int file descriptor.
+// Using the right width avoids truncating the handle (MSVC C4244).
+#ifdef _WIN32
+using socket_t = uintptr_t;
+#else
+using socket_t = int;
+#endif
+
+// Portable invalid-socket sentinel: equals INVALID_SOCKET on Windows and
+// -1 on POSIX, without a signed/unsigned conversion warning at each use.
+constexpr socket_t INVALID_SOCK = static_cast<socket_t>(-1);
+
 /**
  * TCP connection to Infinispan server.
  * Cross-platform: POSIX sockets (Linux/Unix) and Winsock2 (Windows)
@@ -43,7 +56,7 @@ private:
     std::string host_;
     uint16_t port_;
     bool connected_;
-    int socket_;  // Socket descriptor (platform-specific)
+    socket_t socket_;  // Socket descriptor (platform-specific)
 };
 
 } // namespace hotrod
