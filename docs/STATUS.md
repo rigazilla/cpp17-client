@@ -28,12 +28,12 @@ _(Full per-session workflow: [`WORKFLOW.md`](WORKFLOW.md).)_
 
 _The 1–3 concrete things to do next. Keep this short and current._
 
-1. **Step 10 — Metadata operations, continued.** `getWithMetadata` (0x1B/0x1C),
-   `removeWithVersion` (0x0D/0x0E) and `replaceWithVersion` (0x09/0x0A) are now
-   **shipped** (see "Working and shipped"). Next in the recommended order: the
-   conditionals **`putIfAbsent`** (0x05/0x06), **`replace`** (0x07/0x08),
-   **`containsKey`** (0x0F/0x10). Version comes from
-   `getWithMetadata().get()->metadata.version`.
+1. **Step 10 is complete.** `getWithMetadata` (0x1B/0x1C), `removeWithVersion`
+   (0x0D/0x0E), `replaceWithVersion` (0x09/0x0A) and the conditionals
+   `putIfAbsent` (0x05/0x06), `replace` (0x07/0x08), `containsKey` (0x0F/0x10)
+   are all **shipped** (see "Working and shipped"). Next roadmap step:
+   **Step 11 — Error handling** (ERROR response 0x50, exception hierarchy,
+   retry on transient errors).
 2. **Benchmark the multiplexing path** — the async rewrite targets 5–10×
    concurrent throughput; this has not been measured yet.
 3. **Small cleanup:** read header "other params" when `paramCount > 0`
@@ -53,7 +53,7 @@ is authoritative for what's done._
   - [x] `getWithMetadata` (0x1B/0x1C) — **shipped 2026-09-17** (8 unit + 7 integration tests)
   - [x] `removeWithVersion` (0x0D/0x0E) — **shipped 2026-09-19** (7 unit + 5 integration tests). Returns `future<bool>` (matches Java `boolean removeWithVersion(K, long)`); added `Codec::writeLong`/`readLong` (fixed 8-byte BE). Parser drains the `*_WITH_PREVIOUS` (0x03/0x04) body defensively though FORCE_RETURN_VALUE isn't wired yet. Byte layout cross-checked against all three legs: this client, Java `RemoveIfUnmodifiedOperation`, and `hotrod40.ksy` (`remove_if_unmodified_request` = `key: lp_bytes` + `entry_version: s8`, big-endian per `meta.endian: be`).
   - [x] `replaceWithVersion`/REPLACE_IF_UNMODIFIED (0x09/0x0A) — **shipped 2026-09-20** (5 unit + 5 integration tests). Returns `future<bool>`; request reuses PUT's expiration byte (high nibble=lifespan, low=maxIdle) + `Codec::writeLong` for the version. **Schema bug found:** `hotrod40.ksy` `replace_if_unmodified_request` has the expiration nibbles flipped vs `put_request`/`expiration_params`; Java uses one shared `writeExpirationParams` for both, so PUT's order is authoritative. Cross-checked against client + Java `ReplaceIfUnmodifiedOperation` + (corrected reading of) the schema.
-  - [ ] `putIfAbsent` (0x05/0x06), `replace` (0x07/0x08), `containsKey` (0x0F/0x10)
+  - [x] `putIfAbsent` (0x05/0x06), `replace` (0x07/0x08), `containsKey` (0x0F/0x10) — **shipped 2026-09-20** (11 unit + 12 integration tests). `putIfAbsent`/`replace` reuse PUT's request layout (`key` + expiration byte + `value`) and return `future<optional<EntryWithMetadata>>` — the previous/replaced entry when `previousValue` (FORCE_RETURN_VALUE) is set, `nullopt` otherwise; parsers drain the `*_WITH_PREVIOUS` (0x03/0x04) body defensively. `containsKey` is a key-only request returning `future<bool>` from the status (no response body). Cross-checked against Java `PutIfAbsentOperation`/`ReplaceOperation`/`ContainsKeyOperation` and `hotrod40.ksy` (put_if_absent/replace → `put_request`/`put_response`; contains_key → `key_request`, status-only response).
 
   Java ref: `GetWithMetadataOperation`, `ReplaceIfUnmodifiedOperation`. See the
   [step-by-step plan](#plan-metadata-operations-step-10) below.
@@ -99,6 +99,11 @@ multiplexing. See "Working and shipped" below and `PROGRESS.md`._
   returns `future<bool>` (removed?), version from `getWithMetadata`
 - **replaceWithVersion** (0x09/0x0A) — version-based conditional replace (CAS);
   returns `future<bool>` (replaced?); request = key + expiration + version + value
+- **putIfAbsent** (0x05/0x06) — store only if key absent; returns
+  `future<optional<EntryWithMetadata>>` (existing entry when `previousValue` set)
+- **replace** (0x07/0x08) — store only if key present; returns
+  `future<optional<EntryWithMetadata>>` (replaced entry when `previousValue` set)
+- **containsKey** (0x0F/0x10) — key-existence test; returns `future<bool>`
 - **Async API:** all operations return `std::future` / `std::optional`
 - **MultiplexedConnection:** true async — dedicated read-loop thread,
   `messageId → promise` pending map, `execute()` used by all four operations.
@@ -111,8 +116,8 @@ multiplexing. See "Working and shipped" below and `PROGRESS.md`._
   portability and `-Werror` build parity also landed (Sept 2026).
 
 **Test status (verified 2026-09-20):**
-- Unit: **165/165** passing (`./build/unit_tests`, <1s)
-- Integration: **63/63** passing across 11 suites (`ctest`, spins up Docker
+- Unit: **176/176** passing (`./build/unit_tests`, <1s)
+- Integration: **75/75** passing across 14 suites (`ctest`, spins up Docker
   Infinispan single-server + multi-node clusters), now also green on Linux CI.
   The interlaced distributed tests (`ConcurrentMultiServerTest`) were fixed to
   tolerate a GET racing ahead of its PUT — a `nullopt` is expected, only a
@@ -174,17 +179,17 @@ on 2026-09-16. That `.ksy` is the wire-format source of truth for protocol
 |-----------|-----|------|----------|
 | put | 0x01 | 0x02 | ✅ |
 | get | 0x03 | 0x04 | ✅ |
-| putIfAbsent | 0x05 | 0x06 | ❌ |
-| replace (only if present) | 0x07 | 0x08 | ❌ |
+| putIfAbsent | 0x05 | 0x06 | ✅ |
+| replace (only if present) | 0x07 | 0x08 | ✅ |
 | **replaceWithVersion** (replaceIfUnmodified) | **0x09** | **0x0A** | ✅ |
 | remove | 0x0B | 0x0C | ✅ |
 | **removeWithVersion** (removeIfUnmodified) | **0x0D** | **0x0E** | ✅ |
-| containsKey | 0x0F | 0x10 | ❌ |
+| containsKey | 0x0F | 0x10 | ✅ |
 | getWithVersion | 0x11 | 0x12 | ❌ |
 | **getWithMetadata** | **0x1B** | **0x1C** | ✅ |
 
-Opcode constants are defined in `include/hotrod/HeaderCodec.h` (`Opcodes`
-namespace) — currently only PUT/GET/REMOVE/PING. Add the new ones there.
+Opcode constants are defined in `include/hotrod/HeaderCodec.h` (`Opcode`
+namespace). All Step 10 opcodes above are present; add new ones there.
 
 ### Recommended order
 `getWithMetadata` first (it yields the entry version), then the two
@@ -192,7 +197,7 @@ version-based writes that depend on it, then the simpler conditionals:
 1. ~~**getWithMetadata** (0x1B/0x1C)~~ ✅ shipped 2026-09-17
 2. ~~**removeWithVersion** (0x0D/0x0E)~~ ✅ shipped 2026-09-19
 3. ~~**replaceWithVersion** (0x09/0x0A)~~ ✅ shipped 2026-09-20
-4. putIfAbsent (0x05/0x06), replace (0x07/0x08), containsKey (0x0F/0x10) ← next session
+4. ~~putIfAbsent (0x05/0x06), replace (0x07/0x08), containsKey (0x0F/0x10)~~ ✅ shipped 2026-09-20 — **Step 10 complete**
 
 ### Step-by-step: getWithMetadata (the entry point)
 

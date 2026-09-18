@@ -101,6 +101,68 @@ public:
                                                       uint64_t lifespan = 0, uint64_t maxIdle = 0, bool previousValue = false);
 
     /**
+     * PUT_IF_ABSENT operation - store key-value pair only if the key is absent.
+     *
+     * Opcode: 0x05 (PUT_IF_ABSENT_REQUEST) → 0x06 (PUT_IF_ABSENT_RESPONSE)
+     *
+     * Stores the entry only if no value is currently associated with the key.
+     * If the key already exists the entry is left untouched.
+     *
+     * @param key The key as raw bytes
+     * @param value The value as raw bytes
+     * @param lifespan Entry lifespan in seconds (0 = immortal)
+     * @param maxIdle Max idle time in seconds (0 = no max idle)
+     * @param previousValue If true, request previous value with metadata (Protocol 4.0+)
+     * @return Future with optional<EntryWithMetadata>: the existing entry that
+     *         prevented storage (when previousValue is set and the key existed);
+     *         nullopt if the value was stored (key was absent)
+     * @throws std::runtime_error on communication errors (via future.get())
+     *
+     * Reference:
+     * - Java: org.infinispan.client.hotrod.impl.operations.PutIfAbsentOperation
+     */
+    std::future<std::optional<EntryWithMetadata>> putIfAbsent(const ByteArray &key, const ByteArray &value,
+                                                              uint64_t lifespan = 0, uint64_t maxIdle = 0, bool previousValue = false);
+
+    /**
+     * REPLACE operation - store key-value pair only if the key is present.
+     *
+     * Opcode: 0x07 (REPLACE_REQUEST) → 0x08 (REPLACE_RESPONSE)
+     *
+     * Replaces the entry's value only if a value is currently associated with
+     * the key. If the key does not exist nothing is stored.
+     *
+     * @param key The key as raw bytes
+     * @param value The new value as raw bytes
+     * @param lifespan Entry lifespan in seconds (0 = immortal)
+     * @param maxIdle Max idle time in seconds (0 = no max idle)
+     * @param previousValue If true, request previous value with metadata (Protocol 4.0+)
+     * @return Future with optional<EntryWithMetadata>: the replaced (previous)
+     *         entry (when previousValue is set and the key existed); nullopt if
+     *         the key did not exist (nothing replaced)
+     * @throws std::runtime_error on communication errors (via future.get())
+     *
+     * Reference:
+     * - Java: org.infinispan.client.hotrod.impl.operations.ReplaceOperation
+     */
+    std::future<std::optional<EntryWithMetadata>> replace(const ByteArray &key, const ByteArray &value,
+                                                          uint64_t lifespan = 0, uint64_t maxIdle = 0, bool previousValue = false);
+
+    /**
+     * CONTAINS_KEY operation - test whether a key exists in the cache.
+     *
+     * Opcode: 0x0F (CONTAINS_KEY_REQUEST) → 0x10 (CONTAINS_KEY_RESPONSE)
+     *
+     * @param key The key as raw bytes
+     * @return Future<bool>: true if the key exists; false otherwise
+     * @throws std::runtime_error on communication errors (via future.get())
+     *
+     * Reference:
+     * - Java: org.infinispan.client.hotrod.impl.operations.ContainsKeyOperation
+     */
+    std::future<bool> containsKey(const ByteArray &key);
+
+    /**
      * GET_WITH_METADATA operation - retrieve value plus entry metadata.
      *
      * Opcode: 0x1B (GET_WITH_METADATA_REQUEST) → 0x1C (GET_WITH_METADATA_RESPONSE)

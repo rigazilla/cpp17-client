@@ -85,6 +85,9 @@ if(GTest_FOUND)
         tests/unit/RemoveTest.cpp
         tests/unit/RemoveWithVersionTest.cpp
         tests/unit/ReplaceWithVersionTest.cpp
+        tests/unit/PutIfAbsentTest.cpp
+        tests/unit/ReplaceTest.cpp
+        tests/unit/ContainsKeyTest.cpp
         tests/unit/HashAwareRoutingTest.cpp
     )
 
@@ -138,6 +141,18 @@ if(GTest_FOUND)
 
     add_executable(replacewithversion_integration_tests
         tests/integration/ReplaceWithVersionIntegrationTest.cpp
+    )
+
+    add_executable(putifabsent_integration_tests
+        tests/integration/PutIfAbsentIntegrationTest.cpp
+    )
+
+    add_executable(replace_integration_tests
+        tests/integration/ReplaceIntegrationTest.cpp
+    )
+
+    add_executable(containskey_integration_tests
+        tests/integration/ContainsKeyIntegrationTest.cpp
     )
 
     # Topology integration tests (multi-server cluster)
@@ -199,6 +214,27 @@ if(GTest_FOUND)
             # Note: NOT gtest_main - we provide our own main()
     )
 
+    target_link_libraries(putifabsent_integration_tests
+        PRIVATE
+            hotrod-client
+            GTest::gtest
+            # Note: NOT gtest_main - we provide our own main()
+    )
+
+    target_link_libraries(replace_integration_tests
+        PRIVATE
+            hotrod-client
+            GTest::gtest
+            # Note: NOT gtest_main - we provide our own main()
+    )
+
+    target_link_libraries(containskey_integration_tests
+        PRIVATE
+            hotrod-client
+            GTest::gtest
+            # Note: NOT gtest_main - we provide our own main()
+    )
+
     target_link_libraries(topology_integration_tests
         PRIVATE
             hotrod-client
@@ -244,6 +280,9 @@ if(GTest_FOUND)
     add_test(NAME RemoveIntegrationTests COMMAND remove_integration_tests)
     add_test(NAME RemoveWithVersionIntegrationTests COMMAND removewithversion_integration_tests)
     add_test(NAME ReplaceWithVersionIntegrationTests COMMAND replacewithversion_integration_tests)
+    add_test(NAME PutIfAbsentIntegrationTests COMMAND putifabsent_integration_tests)
+    add_test(NAME ReplaceIntegrationTests COMMAND replace_integration_tests)
+    add_test(NAME ContainsKeyIntegrationTests COMMAND containskey_integration_tests)
     add_test(NAME TopologyIntegrationTests COMMAND topology_integration_tests)
     add_test(NAME ConcurrentClientsTests COMMAND concurrent_clients_tests)
     add_test(NAME HashAwareRoutingIntegrationTests COMMAND hash_aware_routing_integration_tests)
@@ -275,6 +314,18 @@ if(GTest_FOUND)
         LABELS "integration;docker"
     )
     set_tests_properties(ReplaceWithVersionIntegrationTests PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        LABELS "integration;docker"
+    )
+    set_tests_properties(PutIfAbsentIntegrationTests PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        LABELS "integration;docker"
+    )
+    set_tests_properties(ReplaceIntegrationTests PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        LABELS "integration;docker"
+    )
+    set_tests_properties(ContainsKeyIntegrationTests PROPERTIES
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         LABELS "integration;docker"
     )
