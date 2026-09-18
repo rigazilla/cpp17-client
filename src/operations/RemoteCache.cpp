@@ -587,6 +587,162 @@ namespace hotrod
                         });
    }
 
+   std::future<std::optional<EntryWithMetadata>> RemoteCache::putIfAbsent(const ByteArray &key, const ByteArray &value,
+                                                                          uint64_t lifespan, uint64_t maxIdle, bool previousValue)
+   {
+      // Build PUT_IF_ABSENT request body: identical layout to PUT
+      //   key (lp_bytes) + time_units (u1) + [lifespan vLong] + [maxIdle vLong]
+      //   + value (lp_bytes)
+      // Mirrors Java PutIfAbsentOperation (extends AbstractKeyValueOperation, so
+      // the same key/expiration/value encoder PUT uses).
+      ByteArray requestBody;
+      Codec::writeByteArray(requestBody, key);
+
+      uint8_t timeUnits = 0;
+      timeUnits |= (lifespan == 0 ? 0x07 : 0x00) << 4;  // high nibble: lifespan
+      timeUnits |= (maxIdle == 0 ? 0x07 : 0x00);        // low nibble: maxIdle
+      requestBody.push_back(timeUnits);
+      if (lifespan > 0)
+         Codec::writeVLong(requestBody, lifespan);
+      if (maxIdle > 0)
+         Codec::writeVLong(requestBody, maxIdle);
+
+      Codec::writeByteArray(requestBody, value);
+
+      // Status codes:
+      // 0x00 = SUCCESS (stored, key was absent)          -> nullopt
+      // 0x01 = NOT_EXECUTED (key already existed)         -> nullopt (no body)
+      // 0x04 = NOT_EXECUTED_WITH_PREVIOUS                 -> existing entry (body)
+      // The *_WITH_PREVIOUS variant only occurs when FORCE_RETURN_VALUE is set
+      // (via previousValue). We drain 0x03/0x04 bodies defensively so the shared
+      // read loop stays byte-aligned.
+      auto bodyParser = [](uint8_t status, Connection *conn, uint8_t /*protocolVersion*/, int32_t /*flags*/) -> std::any
+      {
+         if (status == 0x03 || status == 0x04)
+         {
+            EntryWithMetadata entry;
+            entry.metadata = conn->receiveMetadata();
+            entry.value = conn->receiveByteArray();
+            return entry;
+         }
+         if (status == 0x00 || status == 0x01 || status == 0x02)
+         {
+            return {};
+         }
+         throw std::runtime_error("PUT_IF_ABSENT failed with status: " + std::to_string(status));
+      };
+
+      MultiplexedConnection *conn = selectServerForKey(key);
+      auto responseFuture = conn->execute(requestBody, 0x05, 0x06, bodyParser, cacheName_, (previousValue ? 1 : 0));
+
+      // Transform Response → optional<EntryWithMetadata>: the existing entry that
+      // blocked storage, if returned; nullopt when stored (or no body present).
+      return std::async(std::launch::deferred,
+                        [responseFuture = std::move(responseFuture)]() mutable -> std::optional<EntryWithMetadata>
+                        {
+                           Response resp = responseFuture.get();
+                           if (resp.error)
+                              std::rethrow_exception(resp.error);
+                           if ((resp.status == 0x03 || resp.status == 0x04) && resp.body.has_value())
+                              return std::any_cast<EntryWithMetadata>(resp.body);
+                           return std::nullopt;
+                        });
+   }
+
+   std::future<std::optional<EntryWithMetadata>> RemoteCache::replace(const ByteArray &key, const ByteArray &value,
+                                                                      uint64_t lifespan, uint64_t maxIdle, bool previousValue)
+   {
+      // Build REPLACE request body: identical layout to PUT
+      //   key (lp_bytes) + time_units (u1) + [lifespan vLong] + [maxIdle vLong]
+      //   + value (lp_bytes)
+      // Mirrors Java ReplaceOperation (extends AbstractKeyValueOperation).
+      ByteArray requestBody;
+      Codec::writeByteArray(requestBody, key);
+
+      uint8_t timeUnits = 0;
+      timeUnits |= (lifespan == 0 ? 0x07 : 0x00) << 4;  // high nibble: lifespan
+      timeUnits |= (maxIdle == 0 ? 0x07 : 0x00);        // low nibble: maxIdle
+      requestBody.push_back(timeUnits);
+      if (lifespan > 0)
+         Codec::writeVLong(requestBody, lifespan);
+      if (maxIdle > 0)
+         Codec::writeVLong(requestBody, maxIdle);
+
+      Codec::writeByteArray(requestBody, value);
+
+      // Status codes:
+      // 0x00 = SUCCESS (replaced)                         -> nullopt
+      // 0x01 = NOT_EXECUTED (key did not exist)           -> nullopt (no body)
+      // 0x03 = SUCCESS_WITH_PREVIOUS                      -> previous entry (body)
+      // The *_WITH_PREVIOUS variant only occurs when FORCE_RETURN_VALUE is set
+      // (via previousValue). We drain 0x03/0x04 bodies defensively.
+      auto bodyParser = [](uint8_t status, Connection *conn, uint8_t /*protocolVersion*/, int32_t /*flags*/) -> std::any
+      {
+         if (status == 0x03 || status == 0x04)
+         {
+            EntryWithMetadata entry;
+            entry.metadata = conn->receiveMetadata();
+            entry.value = conn->receiveByteArray();
+            return entry;
+         }
+         if (status == 0x00 || status == 0x01 || status == 0x02)
+         {
+            return {};
+         }
+         throw std::runtime_error("REPLACE failed with status: " + std::to_string(status));
+      };
+
+      MultiplexedConnection *conn = selectServerForKey(key);
+      auto responseFuture = conn->execute(requestBody, 0x07, 0x08, bodyParser, cacheName_, (previousValue ? 1 : 0));
+
+      // Transform Response → optional<EntryWithMetadata>: the replaced (previous)
+      // entry, if returned; nullopt when nothing was replaced (or no body).
+      return std::async(std::launch::deferred,
+                        [responseFuture = std::move(responseFuture)]() mutable -> std::optional<EntryWithMetadata>
+                        {
+                           Response resp = responseFuture.get();
+                           if (resp.error)
+                              std::rethrow_exception(resp.error);
+                           if ((resp.status == 0x03 || resp.status == 0x04) && resp.body.has_value())
+                              return std::any_cast<EntryWithMetadata>(resp.body);
+                           return std::nullopt;
+                        });
+   }
+
+   std::future<bool> RemoteCache::containsKey(const ByteArray &key)
+   {
+      // Build CONTAINS_KEY request body (just the key), like GET.
+      ByteArray requestBody;
+      Codec::writeByteArray(requestBody, key);
+
+      // The response carries no body — only the status. Java ContainsKeyOperation
+      // returns !isNotExist(status) && isSuccess(status).
+      // 0x00 = SUCCESS (key exists)     -> true
+      // 0x01 = NOT_EXECUTED             -> false
+      // 0x02 = KEY_DOES_NOT_EXIST       -> false
+      auto bodyParser = [](uint8_t status, Connection * /*conn*/, uint8_t /*protocolVersion*/, int32_t /*flags*/) -> std::any
+      {
+         if (status == 0x00 || status == 0x01 || status == 0x02)
+         {
+            return {};
+         }
+         throw std::runtime_error("CONTAINS_KEY failed with status: " + std::to_string(status));
+      };
+
+      MultiplexedConnection *conn = selectServerForKey(key);
+      auto responseFuture = conn->execute(requestBody, 0x0F, 0x10, bodyParser, cacheName_);
+
+      // Transform Response → bool (key present?). Success is 0x00.
+      return std::async(std::launch::deferred,
+                        [responseFuture = std::move(responseFuture)]() mutable -> bool
+                        {
+                           Response resp = responseFuture.get();
+                           if (resp.error)
+                              std::rethrow_exception(resp.error);
+                           return resp.status == 0x00;
+                        });
+   }
+
    MultiplexedConnection *RemoteCache::selectServerForKey(const ByteArray &key)
    {
       // If hash-aware routing is enabled and hash topology is available
