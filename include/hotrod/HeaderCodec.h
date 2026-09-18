@@ -32,6 +32,8 @@ namespace Opcode {
     const uint8_t PUT_RESPONSE = 0x02;
     const uint8_t GET_REQUEST = 0x03;
     const uint8_t GET_RESPONSE = 0x04;
+    const uint8_t REPLACE_WITH_VERSION_REQUEST = 0x09;  // replaceIfUnmodified
+    const uint8_t REPLACE_WITH_VERSION_RESPONSE = 0x0A;
     const uint8_t REMOVE_REQUEST = 0x0B;
     const uint8_t REMOVE_RESPONSE = 0x0C;
     const uint8_t REMOVE_WITH_VERSION_REQUEST = 0x0D;   // removeIfUnmodified

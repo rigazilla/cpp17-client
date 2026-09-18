@@ -84,6 +84,7 @@ if(GTest_FOUND)
         tests/unit/PutTest.cpp
         tests/unit/RemoveTest.cpp
         tests/unit/RemoveWithVersionTest.cpp
+        tests/unit/ReplaceWithVersionTest.cpp
         tests/unit/HashAwareRoutingTest.cpp
     )
 
@@ -133,6 +134,10 @@ if(GTest_FOUND)
 
     add_executable(removewithversion_integration_tests
         tests/integration/RemoveWithVersionIntegrationTest.cpp
+    )
+
+    add_executable(replacewithversion_integration_tests
+        tests/integration/ReplaceWithVersionIntegrationTest.cpp
     )
 
     # Topology integration tests (multi-server cluster)
@@ -187,6 +192,13 @@ if(GTest_FOUND)
             # Note: NOT gtest_main - we provide our own main()
     )
 
+    target_link_libraries(replacewithversion_integration_tests
+        PRIVATE
+            hotrod-client
+            GTest::gtest
+            # Note: NOT gtest_main - we provide our own main()
+    )
+
     target_link_libraries(topology_integration_tests
         PRIVATE
             hotrod-client
@@ -231,6 +243,7 @@ if(GTest_FOUND)
     add_test(NAME PutIntegrationTests COMMAND put_integration_tests)
     add_test(NAME RemoveIntegrationTests COMMAND remove_integration_tests)
     add_test(NAME RemoveWithVersionIntegrationTests COMMAND removewithversion_integration_tests)
+    add_test(NAME ReplaceWithVersionIntegrationTests COMMAND replacewithversion_integration_tests)
     add_test(NAME TopologyIntegrationTests COMMAND topology_integration_tests)
     add_test(NAME ConcurrentClientsTests COMMAND concurrent_clients_tests)
     add_test(NAME HashAwareRoutingIntegrationTests COMMAND hash_aware_routing_integration_tests)
@@ -258,6 +271,10 @@ if(GTest_FOUND)
         LABELS "integration;docker"
     )
     set_tests_properties(RemoveWithVersionIntegrationTests PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        LABELS "integration;docker"
+    )
+    set_tests_properties(ReplaceWithVersionIntegrationTests PROPERTIES
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         LABELS "integration;docker"
     )
