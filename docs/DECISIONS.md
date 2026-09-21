@@ -1,12 +1,18 @@
-# Design Decisions Log
+# Decisions & History Log
 
-> Append-only. Newest at the bottom. When you make a design decision whose
-> reasoning you'd otherwise forget, add an entry. **Never rewrite or delete old
-> entries** — if a decision is reversed, add a new entry that supersedes it and
-> note which one it replaces. This is the memory that survives long gaps.
+> Append-only. Newest at the bottom. **This is the home for anything
+> history-worthy** — design decisions *and* their reasoning, dated milestones,
+> gotchas discovered, schema/protocol bugs. If future-you would want to know
+> *why*, *how*, or *when* something happened, it goes here (not in `STATUS.md`,
+> which holds only the current state). **Never rewrite or delete old entries** —
+> if a decision is reversed or a fact changes, add a new entry that supersedes
+> it and note which one it replaces. This is the memory that survives long gaps.
 >
-> Format: `## YYYY-MM-DD — Title` · **Decision** · **Why** · **Alternatives** ·
-> (optional) **Status** if later superseded.
+> **Format:**
+> - Design decision: `## YYYY-MM-DD — Title` · **Decision** · **Why** ·
+>   **Alternatives** · (optional) **Status** if later superseded.
+> - Milestone / gotcha / bug: `## YYYY-MM-DD — Title` · **What** · **Why it
+>   matters** (and, for a gotcha/bug, how it was found and the fix).
 
 ---
 
@@ -133,3 +139,37 @@ only a defaulted param per op and an exclusion-aware `selectServerForKey`.
 to guess op idempotency); fork 1.a retry-on-error (rejected — ~2× effort +
 lifetime footgun for marginally cleaner signatures the default param recovers
 anyway).
+
+## 2026-09-21 — Enforce the STATUS.md update rule; split current-state from history
+
+**Decision:** Make WORKFLOW.md §3 mechanically enforced instead of
+convention-only, and split doc responsibilities cleanly:
+1. **Versioned `pre-commit` hook** (`.githooks/pre-commit`, activated with
+   `git config core.hooksPath .githooks`) **blocks** any commit that changes
+   project source (`src/`, `include/`, `tests/`, `CMakeLists.txt`,
+   `.github/workflows/`) without also staging `docs/STATUS.md`. Merge commits are
+   skipped; `git commit --no-verify` is the documented escape for a legitimate
+   pure-docs catch-up.
+2. **Root `AGENTS.md`** (the working agreement) so any agent or human gets the
+   rule and the hooks-setup step at the top of the repo. A one-line `CLAUDE.md`
+   containing `@AGENTS.md` keeps Claude Code loading it on every version and on
+   Bedrock/Vertex; chose the `@`-import over a symlink (symlinks break on Windows
+   checkouts, which this project supports, and block the Edit tool).
+3. **Tightened rule (this doc's new scope):** `STATUS.md` holds **current state
+   only** (next steps, backlog, what's shipped, test numbers). All history-worthy
+   detail — what changed and *why*, dated milestones, gotchas, schema bugs —
+   goes **here**, in this append-only log. `DECISIONS.md` renamed in spirit to
+   "Decisions & History".
+**Why:** The rule was 100% convention with zero mechanical backing — no git
+hooks, no CI check, no `CLAUDE.md`. History showed the leak: five source/CI
+commits (`9e7c345`, `eafad44`, `9ceb6d3`, `f3d6b86`, `21413e2`) shipped with a
+stale STATUS.md and were reconciled retroactively in a separate batch commit
+(`832b29e`) — exactly the recall cost the workflow exists to remove. STATUS.md
+had also drifted into a current-state/history hybrid (rich dated per-feature
+narrative in the Backlog), which the split now resolves going forward.
+**Alternatives:** CI-only check (rejected as the *primary* guard — fires after
+push, too late; kept as a possible future belt-and-suspenders); a warning-only
+hook (rejected — a warning is just convention with extra steps); leaving
+history in STATUS.md (rejected — it's the source of the drift). Existing
+historical narrative already in STATUS.md is left in place (not migrated); the
+split is forward-looking.

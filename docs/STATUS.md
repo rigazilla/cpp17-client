@@ -10,15 +10,20 @@
 
 ## ▶ Coming back after a break? Do this first
 
-1. `git pull` (if working across machines)
-2. `git log --oneline -5` — see what the last session actually did
-3. Build: `cmake --build build`  (configure first if needed: `cmake -S . -B build`)
-4. Test: `ctest --test-dir build --output-on-failure`
-5. Read **⏭ Next steps** below, pick one, go.
+1. `git config core.hooksPath .githooks` (once per clone/machine — turns on the
+   STATUS.md pre-commit guard; harmless to re-run)
+2. `git pull` (if working across machines)
+3. `git log --oneline -5` — see what the last session actually did
+4. Build: `cmake --build build`  (configure first if needed: `cmake -S . -B build`)
+5. Test: `ctest --test-dir build --output-on-failure`
+6. Read **⏭ Next steps** below, pick one, go.
 
 Then **before you stop**: update *⏭ Next steps* and the *Last updated* date
 while the context is still fresh in your head. This 60-second habit is what
-keeps this file trustworthy across long gaps.
+keeps this file trustworthy across long gaps. Keep this file to **current state
+only** — the *why/how/when* of a change goes in
+[`DECISIONS.md`](DECISIONS.md) (append-only), not here. A `pre-commit` hook
+blocks source changes that don't also update this file.
 
 _(Full per-session workflow: [`WORKFLOW.md`](WORKFLOW.md).)_
 
@@ -258,7 +263,11 @@ together — lives in **[`WORKFLOW.md`](WORKFLOW.md)**. Read that first if you'r
 coming back to the project.
 
 The one habit that keeps this file trustworthy: **update `⏭ Next steps` + the
-`Last updated` date when you *stop*, not when you start** — finished or not.
+`Last updated` date when you *stop*, not when you start** — finished or not. A
+`pre-commit` hook (`.githooks/pre-commit`) enforces it: a commit that changes
+project source without staging this file is blocked.
 
-Rule of thumb: if a fact about the project changes, it changes *here* (or in
-`DECISIONS.md` for *why*) — not in a new dated doc.
+Rule of thumb: **current state changes here; history/reasoning changes in
+[`DECISIONS.md`](DECISIONS.md).** This file is a snapshot ("where the project is
+now"); DECISIONS.md is the append-only ledger of *why/how/when*. Don't write
+narrative history into this file — put it in DECISIONS.md.

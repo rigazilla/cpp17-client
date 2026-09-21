@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+#
+# pre-commit — enforce the WORKFLOW.md "leave a breadcrumb" rule mechanically.
+#
+# Rule (WORKFLOW.md §3): when you change the project, you update the living
+# status before you stop. This hook makes that non-negotiable step actually
+# non-negotiable: if a commit touches project source/build/CI but does NOT
+# also stage docs/STATUS.md, the commit is blocked.
+#
+# History-worthy detail (what changed and why, dated milestones, gotchas,
+# schema bugs) does NOT belong in STATUS.md — it goes in docs/DECISIONS.md
+# (append-only). This hook reminds you of that but does not block on it.
+#
+# Legitimate bypass (e.g. a pure docs catch-up commit that reconciles a prior
+# source-only commit): git commit --no-verify
+#
+# Install (once per clone / machine):  git config core.hooksPath .githooks
+# (WORKFLOW.md documents this in the start-of-session checklist.)
+
+set -euo pipefail
+
+# Skip during a merge — merge commits don't carry a single author intent and
+# the source/status pairing was already enforced on the branch being merged.
+git_dir="$(git rev-parse --git-dir)"
+if [ -f "$git_dir/MERGE_HEAD" ]; then
+    exit 0
+fi
+
+# Staged files (added/copied/modified/renamed), NUL-safe.
+staged="$(git diff --cached --name-only --diff-filter=ACMR)"
+
+# Nothing staged (e.g. `git commit --allow-empty`) → nothing to enforce.
+[ -z "$staged" ] && exit 0
+
+# Paths whose change means "a fact about the project changed" and therefore
+# STATUS.md must move. Keep in sync with WORKFLOW.md.
+is_source() {
+    case "$1" in
+        src/*|include/*|tests/*|CMakeLists.txt|.github/workflows/*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+source_changed=0
+while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    if is_source "$f"; then
+        source_changed=1
+        break
+    fi
+done <<< "$staged"
+
+# No project source touched → docs-only or config-only commit; no requirement.
+[ "$source_changed" -eq 0 ] && exit 0
+
+status_staged=0
+decisions_staged=0
+while IFS= read -r f; do
+    [ "$f" = "docs/STATUS.md" ] && status_staged=1
+    [ "$f" = "docs/DECISIONS.md" ] && decisions_staged=1
+done <<< "$staged"
+
+if [ "$status_staged" -eq 0 ]; then
+    cat >&2 <<'EOF'
+
+  ✗ Commit blocked: project source changed but docs/STATUS.md was not updated.
+
+    WORKFLOW.md §3 — before you stop, update the living status:
+      • docs/STATUS.md   → refresh "⏭ Next steps", the "Last updated" date,
+                           and (if a feature shipped) "Working and shipped" +
+                           the test counts. This is CURRENT STATE only.
+      • docs/DECISIONS.md → append any history-worthy detail: what changed and
+                           why, dated milestones, gotchas, schema bugs.
+                           (Append-only; never rewrite old entries.)
+
+    Then `git add docs/STATUS.md` and commit again.
+
+    Legitimate exception (e.g. a pure docs catch-up commit):
+      git commit --no-verify
+
+EOF
+    exit 1
+fi
+
+# STATUS.md is present — good. Nudge (non-blocking) toward DECISIONS.md so
+# history-worthy reasoning lands there and not as narrative inside STATUS.md.
+if [ "$decisions_staged" -eq 0 ]; then
+    cat >&2 <<'EOF'
+
+  ℹ STATUS.md updated (good). Reminder: history-worthy detail — what changed
+    and *why*, dated milestones, gotchas, schema bugs — belongs in
+    docs/DECISIONS.md (append-only), NOT as narrative in STATUS.md.
+    Skip this if the change carries no reasoning worth preserving.
+
+EOF
+fi
+
+exit 0
