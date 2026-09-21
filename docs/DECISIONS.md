@@ -106,3 +106,30 @@ The Step 10 metadata plan was validated against the schema (opcodes,
 `entry_metadata`, `get_with_metadata_response`).
 **Alternatives:** Treat the schema as the single source of truth (rejected — it
 doesn't capture semantics); rely on prose protocol docs (known to drift).
+
+## 2026-09-21 — Step 11 error handling: split, user-decided retry, retry-on-cache
+
+**Decision:** Three linked decisions for Step 11 (full design + progress tracking
+in [`ERROR_HANDLING_DESIGN.md`](ERROR_HANDLING_DESIGN.md)):
+1. **Split Step 11** into *11a error surfacing* (typed `HotRodClientException`
+   replacing bare `std::runtime_error`; ERROR 0x50 parsing) and *11b retry*.
+2. **Retry is user-decided, not automatic.** The exception carries the facts —
+   `retriable`, a `FailurePhase` (BeforeSend / AfterSend / ServerError), and
+   `triedNodes` — and the user decides whether *their* operation is safe to retry.
+3. **Retry lives on the cache (fork 1.b):** ops take an optional (defaulted)
+   `RetryContext`; the exception stays a pure-data value. Rejected fork 1.a
+   (`err.retry()` on the error object).
+**Why:** (1) 11a is a safe additive edit and is a *prerequisite* for 11b (can't
+retry-on-transient without classifying transient first). (2) The only judgment
+only the user can make safely is the idempotency of the *ambiguous* AfterSend
+failure — dangerous for the Step 10 conditional ops (`putIfAbsent`/`replace`/
+`replaceWithVersion`/`removeWithVersion`), where a blind retry can return a wrong
+logical answer. (3) 1.b is ~40–55% of 1.a's effort and avoids a permanent
+lifetime hazard: 1.a would need a shared dispatcher so the error can re-enter the
+client after crossing the `future` boundary (and UB if the client is destroyed
+first) plus a templated `RetriableError<T>` to return the op's value; 1.b needs
+only a defaulted param per op and an exclusion-aware `selectServerForKey`.
+**Alternatives:** Automatic retry in the client (rejected — the library would have
+to guess op idempotency); fork 1.a retry-on-error (rejected — ~2× effort +
+lifetime footgun for marginally cleaner signatures the default param recovers
+anyway).

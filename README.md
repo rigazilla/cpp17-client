@@ -145,10 +145,12 @@ ctest --output-on-failure
 **Current Progress**: Full CRUD (PING/GET/PUT/REMOVE) + SCRAM auth + topology
 awareness + hash-aware routing + async multiplexing — all shipped. **Next:**
 metadata / version-based operations (Step 10). See [docs/STATUS.md](docs/STATUS.md)
-for live status and [PROGRESS.md](PROGRESS.md) for the per-step history.
+for live status. Per-step milestone history (frozen at Step 9) is archived at
+[docs/archive/PROGRESS.md](docs/archive/PROGRESS.md).
 
 _(Step numbers follow [`../hotrod-foundry/ROADMAP.md`](../hotrod-foundry/ROADMAP.md);
-`PROGRESS.md` is authoritative for which steps are done — not any headline count.)_
+[`docs/STATUS.md`](docs/STATUS.md) is authoritative for which steps are done — not
+any headline count.)_
 
 **Test Results** (verified 2026-09-16):
 - Unit Tests: **145/145 passing** ✅
@@ -227,7 +229,6 @@ for (int i = 0; i < 1000; i++) {
 cpp17-client/
 ├── CMakeLists.txt               # Build configuration
 ├── README.md                    # This file
-├── PROGRESS.md                  # Implementation progress
 ├── LICENSE                      # Apache 2.0
 ├── include/hotrod/              # Public API headers
 │   ├── Types.h                  # Type definitions

@@ -20,6 +20,9 @@ migrated. Do not trust these files for status:
 - `ASYNC_MIGRATION_COMPLETE.md` — titled "Complete" but describes only Phase 1 / blocking shim
 - `ASYNC_MIGRATION_STATUS.md` — tests marked "❌ TODO" (they're migrated)
 - `QUICK_REFERENCE.md` — "❌ REMOVE" checklist for code already removed
+- `PROGRESS.md` — per-step milestone history, frozen at Step 9 (says "Step 10: Not
+  Started"); Steps 10+ and the async migration are done. Current status is in
+  [`../STATUS.md`](../STATUS.md).
 
 Still useful as *reference/design* background (but check against STATUS/DECISIONS):
 - `MULTIPLEXING_DESIGN.md`, `MULTIPLEXING_DECISIONS.md`, `ASYNC_API_FINAL.md`

@@ -84,7 +84,7 @@ exactly one job:
 | [`STATUS.md`](STATUS.md) | The **living** status — next steps, backlog, current state, test numbers | *Everything about "where the project is."* This wins over any other doc. |
 | [`DECISIONS.md`](DECISIONS.md) | **Append-only** log of design decisions + reasoning | *Why* something was done a certain way |
 | [`WORKFLOW.md`](WORKFLOW.md) | This file — the process (rarely changes) | *How* to work on the project |
-| [`../PROGRESS.md`](../PROGRESS.md) | Per-step milestone history | *What's done* (per step) |
+| [`archive/PROGRESS.md`](archive/PROGRESS.md) | Per-step milestone history, frozen at Step 9 | History only — **never** current state |
 | [`../README.md`](../README.md) | User-facing overview + quick start | Consuming the library |
 | [`../../hotrod-foundry/ROADMAP.md`](../../hotrod-foundry/ROADMAP.md) | The master step definitions | *What each step means* |
 | [`archive/`](archive/) | Frozen point-in-time snapshots | History only — **never** current state |

@@ -4,7 +4,7 @@
 > If any other doc disagrees with this file, this file wins. Point-in-time
 > snapshots live in [`archive/`](archive/) and are historical only.
 >
-> **Last updated:** 2026-09-20
+> **Last updated:** 2026-09-21
 
 ---
 
@@ -32,8 +32,12 @@ _The 1–3 concrete things to do next. Keep this short and current._
    (0x0D/0x0E), `replaceWithVersion` (0x09/0x0A) and the conditionals
    `putIfAbsent` (0x05/0x06), `replace` (0x07/0x08), `containsKey` (0x0F/0x10)
    are all **shipped** (see "Working and shipped"). Next roadmap step:
-   **Step 11 — Error handling** (ERROR response 0x50, exception hierarchy,
-   retry on transient errors).
+   **Step 11 — Error handling.** Design agreed 2026-09-21, split into **11a**
+   (typed `HotRodClientException` + ERROR 0x50 parsing — do first) and **11b**
+   (user-decided retry via a defaulted `RetryContext` on the cache). Full design
+   + progress checklist: [`ERROR_HANDLING_DESIGN.md`](ERROR_HANDLING_DESIGN.md);
+   rationale in [`DECISIONS.md`](DECISIONS.md) (2026-09-21 entry). **Start with
+   the 11a checklist.**
 2. **Benchmark the multiplexing path** — the async rewrite targets 5–10×
    concurrent throughput; this has not been measured yet.
 3. **Small cleanup:** read header "other params" when `paramCount > 0`
@@ -45,8 +49,8 @@ _The 1–3 concrete things to do next. Keep this short and current._
 
 _Everything known-to-do, in one place. `⏭ Next steps` above is just the 1–3 you
 pull from here next. Step numbers follow
-[`../hotrod-foundry/ROADMAP.md`](../../hotrod-foundry/ROADMAP.md); `PROGRESS.md`
-is authoritative for what's done._
+[`../hotrod-foundry/ROADMAP.md`](../../hotrod-foundry/ROADMAP.md); this file
+(STATUS.md) is authoritative for what's done._
 
 **Remaining roadmap steps:**
 - **Step 10 — Metadata operations** (version-based CAS). Deliverables:
@@ -57,10 +61,16 @@ is authoritative for what's done._
 
   Java ref: `GetWithMetadataOperation`, `ReplaceIfUnmodifiedOperation`. See the
   [step-by-step plan](#plan-metadata-operations-step-10) below.
-- [ ] **Step 11 — Error handling.** ERROR response parsing (opcode 0x50),
-  length-prefixed error message extraction, an exception hierarchy, and retry
-  logic for transient errors. Java ref:
-  `org.infinispan.client.hotrod.exceptions.*`.
+- [ ] **Step 11 — Error handling.** Design agreed 2026-09-21 →
+  [`ERROR_HANDLING_DESIGN.md`](ERROR_HANDLING_DESIGN.md). Split:
+  - [ ] **11a — Error surfacing:** ERROR response parsing (opcode 0x50),
+    length-prefixed message extraction, a typed `HotRodClientException`
+    (pure-data: `retriable` + `FailurePhase` + `triedNodes` + `serverStatus`)
+    replacing bare `std::runtime_error`. Prerequisite for 11b.
+  - [ ] **11b — User-decided retry:** defaulted `RetryContext` on the ops
+    (fork 1.b), exclusion-aware `selectServerForKey`, thread-safe pool/topology.
+    Retry policy/idempotency is the user's call, not automatic.
+  Java ref: `org.infinispan.client.hotrod.exceptions.*`.
 - [ ] **Step 12 — Bulk operations.** `GET_ALL` (0x2F), `PUT_ALL` (0x2D),
   `BULK_GET` (0x1F, iterator-style).
 
@@ -78,7 +88,7 @@ near caching. Not scheduled.
 _Done and not repeated here: foundation/primitives, Protocol 4.0 headers,
 SCRAM auth (Step 3), topology (Step 4), consistent hashing + hash-aware
 routing, connection pooling (Step 13), full CRUD (Steps 6–9), async
-multiplexing. See "Working and shipped" below and `PROGRESS.md`._
+multiplexing. See "Working and shipped" below._
 
 ---
 
@@ -144,7 +154,7 @@ full list (Steps 10–12, benchmarks, TLS, code TODOs).
 | Unit tests | `tests/unit/` |
 | Integration tests | `tests/integration/` (see `README_TOPOLOGY.md` there) |
 | Why decisions were made | [`DECISIONS.md`](DECISIONS.md) |
-| Historical milestone log | [`../PROGRESS.md`](../PROGRESS.md) |
+| Historical milestone log (frozen at Step 9) | [`archive/PROGRESS.md`](archive/PROGRESS.md) |
 | Superseded snapshots | [`archive/`](archive/) |
 | **Wire-format spec (protocol 4.0/4.1)** | Kaitai schema — local `../hotrod-dissector/schemas/hotrod40.ksy`, public [github.com/rigazilla/hotrod-dissector](https://github.com/rigazilla/hotrod-dissector/tree/main/schemas) |
 | **Java reference client** (authoritative for behavior/semantics) | local `/home/rigazilla/git/infinispan/client/hotrod-client/`, public [github.com/infinispan/infinispan](https://github.com/infinispan/infinispan/tree/main/client/hotrod-client) |
