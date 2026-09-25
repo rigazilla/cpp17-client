@@ -24,7 +24,7 @@ error surface *is* the biggest UX gap and would dominate any such report anyway.
   (`include/hotrod/RemoteCache.h` `@throws` lines; throw sites in
   `src/operations/RemoteCache.cpp:84,237,291,411,449,500,...`.)
 - **No operation-level retry exists.** The "automatic failover" in
-  `selectServerForKey` (`src/operations/RemoteCache.cpp:746`) is
+  `selectServerForKey` (`src/operations/RemoteCache.cpp:757`) is
   *connection-establishment* failover only: its `try/catch` wraps
   `getConnectionForServer` ("can I get a live connection to an owner?"). Once a
   live connection is returned, the op is dispatched to that one connection and is
@@ -142,7 +142,7 @@ The exception carries **raw facts** (`phase`, `serverStatus`, `triedNodes`) plus
 one derived advisory (`ownersExhausted`). Futility (transient vs permanent) is a
 free function, not a stored verdict (D4) — see §3.3. `ownersExhausted` is
 computed for free from `consistentHash_.getOwners(key, topology_)`
-(`RemoteCache.cpp:756`): `ownersExhausted = (owners ⊆ triedNodes)`.
+(`RemoteCache.cpp:757`): `ownersExhausted = (owners ⊆ triedNodes)`.
 
 **`phase` is the highest-value field** — more than `retriable` — because it is
 exactly what lets the user make the idempotency call:
@@ -192,9 +192,9 @@ for (;;) {
 dead node(s). Retry is then just the normal op path with an exclusion set — **no
 closure capture, no shared dispatcher, no templated exception.**
 
-The existing selection (`RemoteCache.cpp:746`) already has the shape: its
-owner loop (761) and fallback "any server" loop (780) skip already-tried nodes
-(782–793). The only new code is (a) an `isExcluded(node, excludeNodes)` predicate
+The existing selection (`RemoteCache.cpp:757`) already has the shape: its
+owner loop (772) and fallback "any server" loop (791) skip already-tried nodes
+(793–806). The only new code is (a) an `isExcluded(node, excludeNodes)` predicate
 in both loops, and (b) reporting the nodes the internal sweep touched so they
 land in `triedNodes`. `proxyToNonOwner` (client-level, D5) gates loop (b): when
 `false`, the owner loop failing throws `ownersExhausted=true` instead of entering
@@ -254,7 +254,7 @@ it elsewhere) but the user must gate it on op idempotency via `outcomeUncertain`
 ERROR 0x50 → `ServerError`. Rule of thumb: **write started at all ⇒ AfterSend**.
 
 **Terminal exhaustion vs permanent:** when selection runs out of nodes ("No
-servers available", `RemoteCache.cpp:809`), throw a **non-transient** exception so
+servers available", `RemoteCache.cpp:819`), throw a **non-transient** exception so
 the user loop stops. That is *exhausted* ("no node could serve it now"), distinct
 from *permanent* (`0x81–0x86`, "request itself rejected") — both stop the loop,
 but the diagnosis differs.
