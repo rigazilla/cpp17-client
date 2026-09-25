@@ -10,6 +10,26 @@
 
 namespace hotrod {
 
+namespace {
+// Map a SCRAM digest to its OpenSSL message digest.
+const EVP_MD* mdFor(SCRAM::Digest digest) {
+    switch (digest) {
+        case SCRAM::Digest::SHA1:   return EVP_sha1();
+        case SCRAM::Digest::SHA256: return EVP_sha256();
+        case SCRAM::Digest::SHA512: return EVP_sha512();
+    }
+    return EVP_sha256();  // unreachable; keeps the compiler happy
+}
+} // namespace
+
+// Map a SASL mechanism name to its SCRAM digest.
+SCRAM::Digest SCRAM::digestForMechanism(const std::string& mechanism) {
+    if (mechanism == "SCRAM-SHA-1")   return Digest::SHA1;
+    if (mechanism == "SCRAM-SHA-256") return Digest::SHA256;
+    if (mechanism == "SCRAM-SHA-512") return Digest::SHA512;
+    throw std::runtime_error("Unsupported SASL mechanism: " + mechanism);
+}
+
 // Generate cryptographically secure random nonce
 std::string SCRAM::generateNonce(size_t length) {
     ByteArray randomBytes(length);
@@ -66,7 +86,8 @@ std::string SCRAM::createClientFinalMessage(const std::string& password,
                                             const std::string& serverFirstMessage,
                                             const std::string& nonce,
                                             const std::string& salt,
-                                            int iterations) {
+                                            int iterations,
+                                            Digest digest) {
     // Channel binding: "c=biws" (base64 of "n,,")
     std::string channelBinding = "biws";
 
@@ -76,21 +97,18 @@ std::string SCRAM::createClientFinalMessage(const std::string& password,
     // AuthMessage = client-first-message-bare + "," + server-first-message + "," + client-final-without-proof
     std::string authMessage = clientFirstMessageBare + "," + serverFirstMessage + "," + clientFinalWithoutProof;
 
-    // SaltedPassword = PBKDF2(password, salt, iterations)
+    // SaltedPassword = PBKDF2(password, salt, iterations); length follows the digest
     ByteArray saltBytes = base64Decode(salt);
-    ByteArray saltedPassword = pbkdf2(password, saltBytes, iterations, 32);  // SHA-256 = 32 bytes
+    ByteArray saltedPassword = pbkdf2(password, saltBytes, iterations, digest);
 
     // ClientKey = HMAC(SaltedPassword, "Client Key")
-    ByteArray clientKey = hmacSha256(saltedPassword, "Client Key");
+    ByteArray clientKey = hmac(saltedPassword, "Client Key", digest);
 
-    // StoredKey = SHA256(ClientKey)
-    ByteArray storedKey(EVP_MD_size(EVP_sha256()));
-    unsigned int storedKeyLen = 0;
-    EVP_Digest(clientKey.data(), clientKey.size(), storedKey.data(), &storedKeyLen, EVP_sha256(), nullptr);
-    storedKey.resize(storedKeyLen);
+    // StoredKey = H(ClientKey)
+    ByteArray storedKey = hash(clientKey, digest);
 
     // ClientSignature = HMAC(StoredKey, AuthMessage)
-    ByteArray clientSignature = hmacSha256(storedKey, authMessage);
+    ByteArray clientSignature = hmac(storedKey, authMessage, digest);
 
     // ClientProof = ClientKey XOR ClientSignature
     ByteArray clientProof = xorBytes(clientKey, clientSignature);
@@ -104,7 +122,8 @@ bool SCRAM::verifyServerFinalMessage(const std::string& message,
                                      const std::string& password,
                                      const std::string& authMessage,
                                      const std::string& salt,
-                                     int iterations) {
+                                     int iterations,
+                                     Digest digest) {
     // Extract server signature from message
     if (message.size() < 2 || message[0] != 'v' || message[1] != '=') {
         return false;
@@ -113,27 +132,29 @@ bool SCRAM::verifyServerFinalMessage(const std::string& message,
 
     // Calculate expected server signature
     ByteArray saltBytes = base64Decode(salt);
-    ByteArray saltedPassword = pbkdf2(password, saltBytes, iterations, 32);
+    ByteArray saltedPassword = pbkdf2(password, saltBytes, iterations, digest);
 
     // ServerKey = HMAC(SaltedPassword, "Server Key")
-    ByteArray serverKey = hmacSha256(saltedPassword, "Server Key");
+    ByteArray serverKey = hmac(saltedPassword, "Server Key", digest);
 
     // ServerSignature = HMAC(ServerKey, AuthMessage)
-    ByteArray expectedSignature = hmacSha256(serverKey, authMessage);
+    ByteArray expectedSignature = hmac(serverKey, authMessage, digest);
 
     // Compare with received signature
     ByteArray receivedSignature = base64Decode(serverSignatureB64);
     return expectedSignature == receivedSignature;
 }
 
-// PBKDF2-HMAC-SHA256
-ByteArray SCRAM::pbkdf2(const std::string& password, const ByteArray& salt, int iterations, size_t keyLength) {
+// PBKDF2-HMAC; derived-key length follows the digest (SHA-1=20, SHA-256=32, SHA-512=64).
+ByteArray SCRAM::pbkdf2(const std::string& password, const ByteArray& salt, int iterations, Digest digest) {
+    const EVP_MD* md = mdFor(digest);
+    const size_t keyLength = static_cast<size_t>(EVP_MD_size(md));
     ByteArray key(keyLength);
 
     if (PKCS5_PBKDF2_HMAC(password.c_str(), static_cast<int>(password.size()),
                           salt.data(), static_cast<int>(salt.size()),
                           iterations,
-                          EVP_sha256(),
+                          md,
                           static_cast<int>(keyLength),
                           key.data()) != 1) {
         throw std::runtime_error("SCRAM::pbkdf2: PBKDF2 derivation failed");
@@ -142,21 +163,36 @@ ByteArray SCRAM::pbkdf2(const std::string& password, const ByteArray& salt, int 
     return key;
 }
 
-// HMAC-SHA256 (string message)
-ByteArray SCRAM::hmacSha256(const ByteArray& key, const std::string& message) {
-    return hmacSha256(key, ByteArray(message.begin(), message.end()));
+// HMAC (string message)
+ByteArray SCRAM::hmac(const ByteArray& key, const std::string& message, Digest digest) {
+    return hmac(key, ByteArray(message.begin(), message.end()), digest);
 }
 
-// HMAC-SHA256 (byte array message)
-ByteArray SCRAM::hmacSha256(const ByteArray& key, const ByteArray& message) {
-    ByteArray result(EVP_MD_size(EVP_sha256()));
+// HMAC (byte array message)
+ByteArray SCRAM::hmac(const ByteArray& key, const ByteArray& message, Digest digest) {
+    const EVP_MD* md = mdFor(digest);
+    ByteArray result(EVP_MD_size(md));
     unsigned int resultLen = 0;
 
-    if (HMAC(EVP_sha256(),
+    if (HMAC(md,
              key.data(), static_cast<int>(key.size()),
              message.data(), message.size(),
              result.data(), &resultLen) == nullptr) {
-        throw std::runtime_error("SCRAM::hmacSha256: HMAC computation failed");
+        throw std::runtime_error("SCRAM::hmac: HMAC computation failed");
+    }
+
+    result.resize(resultLen);
+    return result;
+}
+
+// H (plain hash) with the chosen digest.
+ByteArray SCRAM::hash(const ByteArray& data, Digest digest) {
+    const EVP_MD* md = mdFor(digest);
+    ByteArray result(EVP_MD_size(md));
+    unsigned int resultLen = 0;
+
+    if (EVP_Digest(data.data(), data.size(), result.data(), &resultLen, md, nullptr) != 1) {
+        throw std::runtime_error("SCRAM::hash: digest computation failed");
     }
 
     result.resize(resultLen);

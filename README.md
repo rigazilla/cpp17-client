@@ -3,7 +3,8 @@
 A cross-platform C++17 implementation of the Infinispan Hot Rod protocol client.
 
 🎉 **Smart client** - hash-aware routing, automatic failover, full CRUD +
-metadata ops, typed error handling and user-decided retry (keyed & keyless).
+metadata ops, typed error handling and user-decided retry (keyed & keyless),
+and SASL/SCRAM authentication (SCRAM-SHA-1/256/512).
 
 ## Quick Start
 
@@ -114,7 +115,7 @@ ctest -C Release --output-on-failure
 
 ## Testing
 
-### Unit Tests (204 tests)
+### Unit Tests (223 tests)
 ```bash
 cd build
 ./unit_tests
@@ -123,7 +124,7 @@ cd build
 ctest -R UnitTests --output-on-failure
 ```
 
-### Integration Tests (84 tests, 17 suites)
+### Integration Tests (89 tests, 18 suites)
 Requires Docker to run Infinispan server:
 ```bash
 cd build
@@ -162,8 +163,8 @@ _(Step numbers follow [`../hotrod-foundry/ROADMAP.md`](../hotrod-foundry/ROADMAP
 any headline count.)_
 
 **Test Results** (verified 2026-09-25):
-- Unit Tests: **204/204 passing** ✅
-- Integration Tests: **84/84 passing** ✅ across 17 suites (against live Infinispan via Docker)
+- Unit Tests: **223/223 passing** ✅
+- Integration Tests: **89/89 passing** ✅ across 18 suites (against live Infinispan via Docker)
 
 ## Features
 
@@ -189,6 +190,9 @@ any headline count.)_
   tried nodes) + `isTransient` / `outcomeUncertain` classification (Step 11a)
 - ✅ **User-decided retry** (`cache.excluding(e)` bound view) for keyed ops and
   keyless `ping`, with automatic before-send failover (Step 11b/11c)
+- ✅ **SASL/SCRAM authentication** (`setAuthentication(...)`) — end-to-end for the
+  SCRAM family (`SCRAM-SHA-1`/`SCRAM-SHA-256`/`SCRAM-SHA-512`), applied to every
+  connection; see [`documentation/topics/security.adoc`](documentation/topics/security.adoc)
 - ✅ **Integration test framework** (GoogleTest + Docker + multi-node clusters)
 
 ### Full CRUD with Smart Routing and Async Operations
@@ -262,10 +266,11 @@ cpp17-client/
 │   ├── hash/                    # MurmurHash3 + consistent hashing
 │   └── operations/              # Hot Rod operations (with failover)
 ├── tests/                       # Test suite
-│   ├── unit/                    # 204 unit tests
-│   └── integration/             # 84 integration tests, 17 suites (multi-node clusters)
+│   ├── unit/                    # 223 unit tests
+│   └── integration/             # 89 integration tests, 18 suites (multi-node clusters)
+├── documentation/               # AsciiDoc user guide (index.adoc + topics/)
 ├── examples/                    # Usage examples
-│   └── quickstart/              # Simple GET/PUT/REMOVE example
+│   └── quickstart/              # Simple GET/PUT/REMOVE + retry + auth examples
 ├── scripts/                     # Test infrastructure
 │   ├── start_cluster.sh         # Start multi-node cluster
 │   ├── add_cluster_node.sh      # Add node dynamically
