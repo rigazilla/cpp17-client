@@ -22,8 +22,11 @@ endif()
 # Include directories
 include_directories(${HOTROD_INCLUDE_DIR})
 
-# Create executable
+# Create executables
 add_executable(quickstart quickstart.cpp)
+
+# User-decided retry example (Step 11b)
+add_executable(retry retry.cpp)
 
 # Link against Hot Rod client library
 target_link_libraries(quickstart
@@ -31,8 +34,13 @@ target_link_libraries(quickstart
     pthread
 )
 
-# Install target (optional)
-install(TARGETS quickstart DESTINATION bin)
+target_link_libraries(retry
+    ${HOTROD_LIB_DIR}/libhotrod-client.a
+    pthread
+)
+
+# Install targets (optional)
+install(TARGETS quickstart retry DESTINATION bin)
 
 message(STATUS "Hot Rod Quickstart Example")
 message(STATUS "  Include dir: ${HOTROD_INCLUDE_DIR}")

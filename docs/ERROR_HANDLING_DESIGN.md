@@ -6,8 +6,8 @@
 > keep the one-line pointer in [`STATUS.md`](STATUS.md) → *Next steps* current.
 >
 > **Created:** 2026-09-21 · **Refined:** 2026-09-25 (D4 classification, D5
-> proxy-to-non-owner, Java cross-check) · **Status:** design agreed,
-> implementation not started
+> proxy-to-non-owner, Java cross-check) · **Status:** 11a shipped; 11b slices 1–2
+> (exclusion-aware selection, proxyToNonOwner) shipped 2026-09-25; slices 3–4 remain
 
 ---
 
@@ -115,6 +115,21 @@ connection-fallback inside `selectServerForKey`. Java also auto-re-dispatches
 transient exception with `ownersExhausted = true` so the user drives the proxy
 step.
 
+**Two intentional divergences from Java, even with the flag `true`** (verified
+in-source 2026-09-25; full rationale in DECISIONS.md, 2026-09-25 "Two intentional
+divergences" entry — kept as *option 1*):
+1. **Candidate order.** Java routes to the **primary owner only**
+   (`SegmentConsistentHash.getServer` → `segmentOwners[seg][0]`), then round-robins
+   over the whole cluster (backups get no priority) with *best-effort* exclusion.
+   Ours orders `[primary, backups…, then non-owners]` deterministically with
+   **strict** exclusion. Preferring backups avoids a proxy hop; strict exclusion
+   makes the user retry loop converge.
+2. **After-send retry.** Java auto-retries after-send failures across servers up to
+   `maxRetries`. We do **not** — the caller decides (D2/D4), since only the caller
+   knows if a non-idempotent op is replay-safe. So one call's connection sweep
+   covers reachability across the cluster, but a node that *connects then errors*
+   is surfaced to the user, not silently re-dispatched.
+
 ---
 
 ## 3. The design (target)
@@ -156,9 +171,10 @@ exactly what lets the user make the idempotency call:
 completed). `triedNodes` accumulates across successive retries (each produced
 error carries the *union*).
 
-### 3.2 Retry via the cache (11b)
-Ops gain an optional retry/exclusion context, defaulted so existing call sites are
-untouched:
+### 3.2 Retry via the cache — a bound view (11b)
+The retry/exclusion context is **not** a parameter on the base operations. The
+base signatures stay completely retry-free; a caller opts into exclusion by
+asking the cache for a *bound view* that carries a `RetryContext`:
 
 ```cpp
 struct RetryContext {                          // USER→library input only
@@ -168,25 +184,36 @@ struct RetryContext {                          // USER→library input only
     //     (config), matching how Java models balancing/maxRetries (D5).
 };
 
-// existing signature keeps working:
+// base op — signature unchanged, zero retry machinery:
 std::future<std::optional<ByteArray>> get(const ByteArray& key);
-// retrying caller passes context built from the caught exception:
-std::future<std::optional<ByteArray>> get(const ByteArray& key,
-                                          const RetryContext& ctx);
+
+// bound view: same ops, each dispatched avoiding the excluded nodes:
+RetryView RemoteCache::excluding(std::vector<ServerAddress> excludeNodes);
+RetryView RemoteCache::excluding(const HotRodClientException& e);  // seed from e.triedNodes
 ```
+
+`RetryView` is a lightweight, non-owning view (`RemoteCache* + RetryContext`)
+whose ops forward to private `RemoteCache::…Impl(args, const RetryContext&)`
+methods. **Design change (supersedes the earlier per-op `RetryContext`
+parameter):** the base call must stay free of retry machinery in its signature;
+it is fine for the *exception* to carry tried-node data. See the 2026-09-25
+slice-3 entry in DECISIONS.md.
 
 Typical user loop:
 ```cpp
-RetryContext ctx;
 for (;;) {
-    try { return cache.get(key, ctx).get(); }
+    try { return cache.get(key).get(); }        // first call: pristine, retry-free
     catch (const HotRodClientException& e) {
-        if (!e.retriable) throw;
+        if (!isTransient(e)) throw;             // futility is a free function, not a field
         // user decides based on e.phase whether THIS op is safe to retry
-        ctx.excludeNodes = e.triedNodes;
+        return cache.excluding(e).get(key).get();  // avoids e.triedNodes
     }
 }
 ```
+
+Even the pristine first call populates `e.triedNodes`, so `cache.excluding(e)`
+always has the exclusion set it needs — accumulated monotonically across
+attempts via the pure `unionNodes()` helper.
 
 `selectServerForKey` gains an **exclusion-aware** variant so a retry avoids the
 dead node(s). Retry is then just the normal op path with an exclusion set — **no
@@ -279,7 +306,7 @@ What each fork adds **on top of B**:
 | Exception shape | Templated `RetriableError<T>` + non-template base so `retry()` can return the op's value (M) | Pure data, one type (0) |
 | Re-dispatch machinery | Replayable closure captured into the error; reify each op into a re-invocable form (M) | Normal op path + exclusion arg — no capture (0) |
 | Lifetime | Extract a shared dispatcher/session so the error can re-enter after crossing the `future` boundary; permanent "stashed error outlives client → UB" hazard (L) | Cache owns everything and is alive when called — no coupling (0) |
-| API surface | Op signatures stay clean | ~9 ops gain a defaulted `RetryContext` param; common call site unchanged (M, mechanical) |
+| API surface | Op signatures stay clean | Op signatures stay clean too — exclusion is a `cache.excluding(…)` bound view (`RetryView`), not a per-op param; retry path forwards to private `…Impl` (M, mechanical) |
 | Thread-safety of pool/topology | Required, and worse: retry fires from an arbitrary thread possibly long after the call (M–L) | Required, but it's ordinary concurrent method use (M) |
 
 **Rough estimate:** 1.b ≈ **40–55%** of 1.a's total effort. Savings concentrate in
@@ -311,19 +338,54 @@ lifetime-footgun and keeps the error trivially copyable/loggable/storable.
       (+ `ConnectionUsableAfterServerError` proves no stream desync).
 
 ### 11b — User-decided retry
-- [ ] `RetryContext` struct (§3.2), defaulted on every op signature.
-- [ ] Exclusion-aware `selectServerForKey` variant (skip `excludeNodes`).
-- [ ] Client-level `proxyToNonOwner` flag (default `true`, D5): gates the
-      owner→non-owner fallback; when `false`, throw `ownersExhausted=true`.
-- [ ] Populate `ownersExhausted` from `getOwners(key) ⊆ triedNodes`.
-- [ ] Thread-safety: guard `topology_` + `connectionPool_` + selection path
-      (retry may be driven concurrently with the read-loop's topology updates).
-- [ ] `triedNodes` accumulation across successive retries (union); the internal
-      BeforeSend sweep reports *all* nodes it touched.
-- [ ] Unit tests: exclusion selection; context threading; union accumulation;
-      proxyToNonOwner on/off; ownersExhausted.
-- [ ] Integration test: kill a node mid-run, user-loop retry lands on another.
-- [ ] Docs/example: the retry loop pattern (§3.2) in `examples/quickstart/`.
+- [x] `RetryContext` struct (§3.2) — **slice 1** (`include/hotrod/RetryContext.h`).
+      Op-level threading (slice 3) is done via a **bound view** (`RetryView` +
+      `cache.excluding()`), NOT a per-op parameter — base op signatures stay
+      retry-free. See the §3.2 design change and the slice-3 DECISIONS entry.
+- [x] Exclusion-aware `selectServerForKey` variant (skip `excludeNodes`) —
+      **slice 1**. Routing decision extracted to the pure, unit-tested
+      `orderKeyCandidates()` (`include/hotrod/ServerSelection.h`).
+- [x] Client-level `proxyToNonOwner` flag (default `true`, D5): gates the
+      owner→non-owner fallback; when `false`, throw `ownersExhausted=true` —
+      **slice 2** (`setProxyToNonOwner`/`getProxyToNonOwner`; gated in the pure
+      `orderKeyCandidates()`).
+- [x] Populate `ownersExhausted` from `getOwners(key) ⊆ triedNodes` —
+      **slice 1** (owner counts as exhausted if tried this attempt *or* excluded
+      from a prior one).
+- [x] Thread-safety: guard `topology_` + `connectionPool_` + selection path
+      (retry may be driven concurrently with the read-loop's topology updates) —
+      **slice 4**. One `stateMutex_` guards topology/hash/pool across
+      `handleTopologyUpdate` (read-loop) and `selectServerForKey` (user/retry);
+      pool + default connection are `shared_ptr` so a connection handed to an
+      in-flight op survives a concurrent topology eviction (no free
+      mid-`execute()`). Deadlock/lock-order verified; see the 2026-09-25 slice-4
+      DECISIONS entry.
+- [x] `triedNodes` accumulation across successive retries (union); the internal
+      BeforeSend sweep reports *all* nodes it touched. **Sweep reporting in slice
+      1** (`selectServerForKey` `triedOut` out-param); the cross-retry union
+      lands in **slice 3** — every op (first call included) folds
+      `excludeNodes ∪ tried ∪ e.triedNodes` into the thrown exception via the
+      pure `unionNodes()` helper (`ServerSelection.h`).
+- [x] Op-level retry threading via `RetryView` bound view — **slice 3**
+      (`include/hotrod/RetryView.h`; 9 private `…Impl` methods on `RemoteCache`;
+      `excluding(nodes)` / `excluding(exception)`).
+- [~] Unit tests: exclusion selection; union accumulation; proxyToNonOwner
+      on/off; ownersExhausted. **Exclusion selection (slice 1), proxyToNonOwner
+      on/off (slice 2), and union accumulation (slice 3) covered**
+      (`ServerSelectionTest`, 14 tests). `RetryView` dispatch is exercised by the
+      integration test below (needs live servers).
+- [x] Integration test: kill a node mid-run, user-loop retry lands on another —
+      **slice 5** (`tests/integration/RetryViewIntegrationTest.cpp`, 3 tests):
+      `excluding()` route-around (deterministic), proxy-disabled owners-exhausted
+      throw (deterministic), and the catch→`excluding(e)` loop after killing the
+      primary owner. Verified 3/3 against a live 3-node cluster. See DECISIONS.md
+      (2026-09-25 slice-5 entry) for why the kill-loop test tolerates both the
+      throw-then-retry and the automatic re-routing recovery paths.
+- [x] Docs/example: the retry loop pattern (§3.2) in `examples/quickstart/` —
+      **slice 6** (`examples/quickstart/retry.cpp` + README section). Shows the
+      `getWithRetry`/`putWithRetry` loops (isTransient + outcomeUncertain +
+      `excluding(e)`) and states that `proxyToNonOwner` does not let a caller skip
+      the catch block. Builds warning-clean; runs end-to-end against a live server.
 
 ---
 

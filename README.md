@@ -45,6 +45,9 @@ The quickstart demonstrates:
 - REMOVE operations (deleting entries)
 - Clean disconnect
 
+A second example, `retry.cpp`, demonstrates the user-decided retry loop
+(`cache.excluding(e)` on a caught `HotRodClientException`).
+
 See [`examples/quickstart/README.md`](examples/quickstart/README.md) for full documentation.
 
 ## Building

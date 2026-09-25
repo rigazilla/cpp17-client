@@ -125,10 +125,58 @@ cache.remove(key);
 cache.disconnect();
 ```
 
+## User-Decided Retry (`retry` example)
+
+`retry.cpp` demonstrates Step 11b — **the client never retries on its own**.
+A failure surfaces as a typed `HotRodClientException` carrying the facts you need
+(which phase it failed in, which nodes were already tried); you opt into a retry
+explicitly, on the failure path, via `cache.excluding(e)`:
+
+```cpp
+std::vector<ServerAddress> excluded;      // nodes tried so far
+for (int attempt = 1; ; ++attempt) {
+    try {
+        return excluded.empty()
+            ? cache.get(key).get()
+            : cache.excluding(excluded).get(key).get();
+    } catch (const HotRodClientException& e) {
+        if (!isTransient(e)) throw;       // permanent — give up
+        // ... your idempotency decision (outcomeUncertain(e)) for writes ...
+        excluded = e.triedNodes;          // avoid tried nodes next time
+    }
+}
+```
+
+Why user-decided? Only the caller knows whether replaying *this* operation is
+safe. `isTransient(e)` answers "is a retry worthwhile?"; `outcomeUncertain(e)`
+answers "might it already have applied?" — you `AND` the second with your own
+knowledge of the op before replaying a non-idempotent write.
+
+> **The `proxyToNonOwner` flag does NOT let you skip the catch block.**
+> `proxyToNonOwner=true` (the default) only widens the *connection-selection*
+> candidate pool for a **single** dispatch: if no owner is reachable *before the
+> request is sent*, selection falls through to another node that proxies to the
+> owner. But one operation still executes on exactly **one** node, so any failure
+> *after* the request is sent (dropped connection, server ERROR, command timeout)
+> still comes back to you as an exception. The flag changes where the first
+> attempt is *sent*; it does not make retry automatic.
+
+Build it alongside `quickstart` (both targets are in `CMakeLists.txt`):
+
+```bash
+cd build && cmake .. && make        # builds quickstart and retry
+./retry
+```
+
+Run it against a **cluster** and kill an owner node mid-run to actually exercise
+the retry path (the same scenario covered by
+`tests/integration/RetryViewIntegrationTest.cpp`).
+
 ## Files
 
-- `quickstart.cpp` - Main example code
-- `CMakeLists.txt` - Build configuration
+- `quickstart.cpp` - Basic PUT/GET/REMOVE example
+- `retry.cpp` - User-decided retry loop (Step 11b)
+- `CMakeLists.txt` - Build configuration (builds both examples)
 - `start-server.sh` - Script to start Infinispan server
 - `stop-server.sh` - Script to stop Infinispan server
 - `README.md` - This file

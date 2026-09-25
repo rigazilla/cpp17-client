@@ -229,3 +229,275 @@ retry user-decided rather than automatic (2026-09-21 entry).
 the two axes and forces the library to pre-judge user idempotency); follow Java
 and treat 0x86 as non-retriable (rejected — the ambiguity is already carried by
 `outcomeUncertain()`, so the extra futility signal is safe and useful).
+
+---
+
+## 2026-09-25 — Step 11b (slice 1): exclusion-aware server selection
+
+**What shipped:** the first slice of Step 11b — the routing mechanism a
+user-driven retry needs, with no behavioural change to existing (non-retrying)
+call sites.
+
+- **`orderKeyCandidates()`** (new `include/hotrod/ServerSelection.h`, header-only,
+  pure): given owners, all topology servers, and an exclusion set, returns the
+  ordered candidate list — owners first (in owner order), then non-owner proxy
+  fallback — with excluded nodes and duplicates removed. Pulled out precisely
+  because the old inline selection logic was untestable (needs live sockets);
+  the pure decision now has 7 unit tests (`ServerSelectionTest.cpp`).
+- **`RetryContext`** (new `include/hotrod/RetryContext.h`): pure-value
+  user→library input, currently just `excludeNodes`. Deliberately does NOT carry
+  `proxyToNonOwner` — that is client-level routing policy (D5), landing in
+  slice 2.
+- **`selectServerForKey`** rewritten over `orderKeyCandidates`; gains defaulted
+  `RetryContext` + optional `triedOut` out-param that reports every node it
+  attempted (for accumulating `triedNodes` across retries in slice 3). On
+  exhaustion it now computes `ownersExhausted` honestly (an owner counts as
+  exhausted if tried this attempt *or* in `excludeNodes` from a prior one)
+  instead of the previous hard-coded `true`.
+
+**Why sliced this way:** exclusion-aware selection is the foundation both the
+op-level `RetryContext` threading (slice 3) and `proxyToNonOwner` (slice 2)
+build on, and it is the one piece testable without a cluster. Keeping it a pure
+function keeps the I/O (connection acquisition, which can throw per candidate)
+separate from the decision.
+
+**Note:** the design-doc example loop still referenced a removed `e.retriable`
+field; corrected to `isTransient(e)` while here.
+
+---
+
+## 2026-09-25 — Step 11b (slice 2): proxyToNonOwner client flag
+
+**What shipped:** client-level `proxyToNonOwner` (default `true`, matching Java),
+gating whether hash-aware selection falls through from a key`s owners to a
+non-owner that proxies to the real owner.
+
+- `setProxyToNonOwner()` / `getProxyToNonOwner()` on `RemoteCache`; backing
+  `proxyToNonOwner_` member defaulted `true`.
+- The gate lives in the pure `orderKeyCandidates()` (new `bool` param): when
+  false it stops after owners, so `selectServerForKey` exhausting the owners
+  throws the transient BeforeSend exception with `ownersExhausted=true` instead
+  of silently proxying. 3 new unit tests (10 total in `ServerSelectionTest`).
+
+**Why a client-level flag, not `RetryContext` (D5):** proxy fallback is routing
+policy, not per-call input — it mirrors how Java models balancing/maxRetries at
+the client, and keeps `RetryContext` a pure exclusion carrier. **Scope:** the
+flag governs only the BeforeSend connection-fallback inside `selectServerForKey`;
+it does NOT make AfterSend retry automatic (that stays user-decided, D2). So
+`true` means "Java-like routing fallback", not "fully Java-automatic".
+
+Unit: 197/197 (was 194).
+
+## 2026-09-25 — Step 11b (slice 3): op-level retry via a bound view, NOT a per-op parameter
+
+**What shipped:** the retry path that lets a caught exception feed the next
+attempt, without putting any retry machinery on the base operation signatures.
+
+- New `RetryView` (`RetryView.h`): a lightweight, non-owning view holding
+  `RemoteCache* + RetryContext`. It exposes the same key-routed ops, each
+  forwarding to a private `RemoteCache::…Impl(args, const RetryContext&)`.
+- `RemoteCache::excluding(std::vector<ServerAddress>)` and
+  `excluding(const HotRodClientException&)` return a `RetryView`; the second
+  seeds the exclusion set directly from a caught exception's `triedNodes`.
+- Each of the 9 ops split into a thin public forwarder (`return getImpl(key,
+  RetryContext{});`) + a private `…Impl` carrying the body. The public
+  signatures are **byte-for-byte unchanged**.
+- `triedNodes` accumulation: every attempt (including the plain first call)
+  unions the nodes it touched into any thrown `HotRodClientException` via the new
+  pure `unionNodes()` helper (`ServerSelection.h`), folding
+  `excludeNodes ∪ tried-this-attempt ∪ e.triedNodes`. A file-private
+  `rethrowWithTriedNodes()` in `RemoteCache.cpp` does this on the async path;
+  the selection-exhaustion and inline-status throws do it inline. 4 new unit
+  tests (14 total in `ServerSelectionTest`).
+
+**Why a bound view instead of a defaulted `RetryContext` on each op (supersedes
+the fork-1.b sketch in the 2026-09-21 entry):** the original 11b plan added an
+optional `RetryContext` parameter to every op. The user rejected that — the
+requirement is that the base call (`cache.get(key)`) stay completely free of
+retry machinery in its signature, while it's fine for the *exception* to carry
+tried-node data. The bound view satisfies both: base ops are pristine and
+retry-free; opting into exclusion is an explicit, separate `cache.excluding(e)`
+step on the retry path; and `triedNodes` is populated on every exception
+(first call included) so a retry loop always has the exclusion set it needs.
+This supersedes only the *mechanism* (per-op parameter → bound view); the fork
+1.b rationale (retry threads exclusion through selection; policy/idempotency stay
+the user's call, D2/D3) is unchanged.
+
+Unit: 201/201 (was 197). Full multi-target build clean under `-Werror`.
+
+## 2026-09-25 — Two intentional divergences from the Java client's routing/retry
+
+Cross-checked our hash-aware selection and retry model against the authoritative
+Java client (verified in-source, not from prose):
+`SegmentConsistentHash.getServer` and the `RoundRobinBalancingStrategy` /
+`OperationDispatcher` retry path. Two deliberate divergences, chosen with eyes
+open and kept:
+
+**1. Candidate ordering — backup-first + strict exclusion (routing).**
+Java, hash-aware with the default RoundRobin balancer:
+- `SegmentConsistentHash.getServer()` returns **`segmentOwners[segmentId][0]` —
+  the primary owner only.** Backups get no priority.
+- On failure it falls to `RoundRobinBalancingStrategy.nextServer(failedServers)`,
+  round-robining over the **entire topology** (shared atomic index), skipping the
+  per-op failed set **best-effort** (it can return a failed server once it has
+  looped `failedServers.size()` times).
+
+Ours (`orderKeyCandidates`, `proxyToNonOwner=true`): candidates are
+`[primary, backups…, then all other servers]` in deterministic owner order, and
+excluded nodes are **strictly** removed (never returned). **Why kept (option 1):**
+preferring backup owners avoids a server-side proxy hop (backups hold the data),
+the order is deterministic (easier to reason about/test), and strict exclusion is
+what makes the user-driven retry loop actually converge instead of possibly
+re-hitting a dead node. Trade-off: not byte-for-byte Java behavior. This is the
+routing analogue of the 0x86 divergence already recorded (2026-09-25, 11a).
+
+**2. After-send retry is delegated to the user (not automatic).**
+Java's balancer + `maxRetries` re-dispatches **after-send** failures across
+servers automatically. For non-idempotent ops with an **uncertain outcome**
+(`COMMAND_TIMEOUT` 0x86 / `FailurePhase::AfterSend` — the server may already have
+applied the op) that risks double-apply or clobbering a concurrent write. We do
+NOT auto-retry: we surface `phase` + `outcomeUncertain()` and let the caller —
+who alone knows whether *this* op is replay-safe — decide. **Why kept:** strictly
+more correct for the non-idempotent case; the idempotent read case costs only a
+three-line retry loop. Trade-off: naive callers get no automatic retry. This
+reinforces D2 (retry user-decided) and D4 (classify futility/ambiguity, don't
+auto-decide safety); it is a considered improvement over Java's default, not an
+omission.
+
+## 2026-09-25 — Step 11b (slice 4): thread-safety for the routing/pool state
+
+**What shipped:** the selection path can now be driven from user/retry threads
+concurrently with the read-loop thread's topology callbacks, which is exactly the
+concurrency the RetryView retry loop introduces.
+
+- **One `stateMutex_`** (mutable) guards the three shared members —
+  `topology_`, `consistentHash_`, `connectionPool_`. It is acquired at the top of
+  the two entry points that touch them: `handleTopologyUpdate` (read-loop thread,
+  writes) and `selectServerForKey` (user/retry threads, reads + pool mutate).
+  Their internal helpers — `cleanupStaleConnections` and `getConnectionForServer`
+  — assume the lock is held and do **not** re-lock (documented; avoids a
+  recursive mutex).
+- **Connection lifetime via `shared_ptr`.** The pool and the default connection
+  are now `shared_ptr<MultiplexedConnection>`; `selectServerForKey` returns a
+  `shared_ptr` and each op captures it into its response lambda. This closes a
+  use-after-free the concurrent path would otherwise expose: previously
+  `selectServerForKey` handed back a raw pointer that `cleanupStaleConnections`
+  could `erase`/destroy while the op was mid-`execute()`. Now a connection handed
+  to an in-flight op stays alive for the op's duration even if a topology update
+  evicts it from the pool.
+
+**Deadlock / lock-ordering analysis (verified in-source):**
+- `connect()` never fires the topology callback synchronously — `onTopologyUpdate_`
+  is invoked only from `readLoop()` on the connection's own read thread — so
+  holding `stateMutex_` across `getConnectionForServer`→`connect()` cannot
+  self-deadlock.
+- In `readLoop`, `onTopologyUpdate_` is called **after** `pendingMutex_` is
+  released, so the read thread holds no MultiplexedConnection-internal lock when
+  `handleTopologyUpdate` acquires `stateMutex_`. There is thus no cycle with
+  `selectServerForKey` (which takes `stateMutex_` first, then connection-internal
+  locks via `connect()`).
+
+**Trade-offs / known limits (deliberate, noted for the next session):**
+- `stateMutex_` is held across the blocking `connect()` inside
+  `getConnectionForServer`, so a slow connect serializes other selections and can
+  briefly delay a topology callback. Correctness-first; a double-checked
+  connect-outside-lock is possible later if it ever matters.
+- The debug/test accessors `getTopology()` / `getConsistentHash()` still return
+  references to the guarded state and are **not** safe to read concurrently with
+  live ops / topology churn (documented on them); `getTopologyId()` is locked and
+  safe. Converting the reference getters to by-value was out of scope (pervasive
+  test use, chaining, ConsistentHash copyability).
+- Teardown still assumes single-threaded shutdown (pool connections' read threads
+  stop when `connectionPool_` is destroyed); not a concurrent-operation concern,
+  left as-is.
+
+Validation: full multi-target build clean under Release `-Werror`; unit 201/201.
+Thread-safety itself is best validated by the existing concurrent integration
+suites (`ConcurrentClientsTest`, `ConcurrentMultiServerTest`) and a TSan run —
+these need live servers/Docker and were not run in this session.
+
+## 2026-09-25 — Step 11b (slice 4): TSan validation + test-harness race fix
+
+**TSan run (done this session, against live Docker cluster).** The concurrent
+integration suites were run both functionally (8/8 pass, including
+`ConcurrentWithFailover`, which kills node2 mid-run) and under ThreadSanitizer
+(`-fsanitize=thread`, dedicated `build-tsan/`).
+
+**Result: slice 4's synchronization held clean.** TSan reported **zero** races in
+production code — no frame in any race stack touches `RemoteCache.cpp` or
+`MultiplexedConnection.cpp` (`selectServerForKey`, `handleTopologyUpdate`,
+`getConnectionForServer`, `connectionPool_` all absent). The `stateMutex_` +
+`shared_ptr` design (previous entry) is confirmed race-free under the retry
+loop's concurrency.
+
+**One test-harness race found and fixed.** All 9 TSan warnings pointed at the
+same line — `TopologyTestFixture.h` `createClient()` doing an unsynchronized
+`clients.push_back()` on a shared `std::vector<unique_ptr<RemoteCache>>` while
+`ConcurrentMultiServerTest.MultipleClientsInterlaced` calls it from several
+threads. `std::vector::push_back` is not safe for concurrent callers (a
+reallocation moves the buffer out from under another thread's write). This is
+test scaffolding, predates slice 4, and never corrupted production state — but a
+dirty TSan baseline hides *future* real races. **Fix:** a `clientsMutex` guards
+the `push_back`; `TearDown` stays lockless (runs single-threaded after joins).
+Test-only change; behavior unchanged; concurrent suites still build clean.
+
+## 2026-09-25 — Step 11b (slice 5): RetryView end-to-end integration test
+
+**What shipped:** `tests/integration/RetryViewIntegrationTest.cpp` (3 tests,
+verified 3/3 against a live 3-node Docker cluster), wired into CMake/ctest as
+`RetryViewIntegrationTests`. It is deliberately distinct from the existing
+failover tests (`ConcurrentWithFailover`, `FailoverToBackupOwner`), which cover
+*automatic* before-send re-routing; this suite asserts the *explicit*
+user-driven `excluding()` dispatch that is the point of slice 3.
+
+- **`ExcludingRoutesAroundOwner`** (deterministic, no kill): `cache.excluding(
+  {primaryOwner}).get(key)` still returns the value, proving the RetryView routes
+  the request to a different node (backup owner or non-owner proxy). Isolates the
+  routing decision from failure timing.
+- **`ProxyDisabledOwnersExhaustedThrows`** (deterministic, no kill): with
+  `setProxyToNonOwner(false)` and every owner excluded, selection has no
+  candidate and throws `HotRodClientException{phase=BeforeSend,
+  ownersExhausted=true}`, `isTransient(e)==true`, with the excluded owners
+  present in `triedNodes`. Locks in the D5 contract (refuse to silently proxy;
+  hand the decision back).
+- **`UserRetryLoopAfterPrimaryKilled`** (end-to-end, kills the primary owner):
+  runs the documented catch→`excluding(e)` loop from ERROR_HANDLING_DESIGN §3.2.
+
+**Design note — why the loop test tolerates two recovery paths.** After the
+primary owner is killed, a plain `get` can recover *either* by throwing (dead
+connection / owner unreachable) and being retried via `excluding(e)`, *or* by
+automatic before-send re-routing once the topology update lands — which path wins
+is a timing race we cannot make deterministic without artificial fault injection.
+The test therefore asserts the invariant that actually matters (the value is
+recovered) and, *only if* an exception was caught, that the failure was transient,
+that each attempt widened `triedNodes`, and that the killed primary ended up in
+the exclusion set. The first observed run recovered via automatic re-routing;
+the deterministic `excluding()` dispatch is nonetheless fully covered by the two
+no-kill tests above, so RetryView routing does not depend on that race. Trade-off
+accepted: no artificial after-send fault injection (would need a fault hook in
+the transport) — deferred as not worth the complexity for this step.
+
+## 2026-09-25 — Step 11b (slice 6): retry-loop example — **Step 11b complete**
+
+**What shipped:** `examples/quickstart/retry.cpp` (built as a second target
+alongside `quickstart`) plus a README section. Two reusable loops —
+`getWithRetry` (idempotent) and `putWithRetry` (shows the extra
+`outcomeUncertain()` gate a non-idempotent write needs) — implement the
+documented pattern: retry-free first call, then `cache.excluding(e)` seeded from
+the caught exception's `triedNodes`, stopping on `!isTransient(e)`. Builds
+warning-clean under `-Wall -Wextra -Werror -pedantic`; runs end-to-end against a
+live single server (the retry branch only fires on a cluster with a node killed
+mid-run, as the file/README note).
+
+**The clarification folded in (user's Q from the prior session).** The example
+header and README state explicitly that `proxyToNonOwner=true` does **not** let a
+caller skip the catch block: the flag only widens the *connection-selection*
+candidate pool for a single pre-send dispatch, but one operation still executes
+on exactly one node, so any after-send/server-error failure still surfaces as an
+exception the caller must catch and retry. This closes the open question from the
+2026-09-25 "two intentional divergences" discussion and completes Step 11b.
+
+**Deliberately left out of the example:** artificial fault injection to force the
+retry branch. Keeping the example runnable against a plain single server (and
+pointing at `RetryViewIntegrationTest` for the kill-a-node scenario) was judged
+clearer than shipping an example that needs a cluster to run at all.

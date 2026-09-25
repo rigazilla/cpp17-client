@@ -33,17 +33,38 @@ _(Full per-session workflow: [`WORKFLOW.md`](WORKFLOW.md).)_
 
 _The 1–3 concrete things to do next. Keep this short and current._
 
-1. **Step 11a is complete.** Typed `HotRodClientException` (pure-data:
-   `FailurePhase` + `serverStatus` + `triedNodes` + `ownersExhausted`) now
-   replaces bare `std::runtime_error` across the ops, and the server ERROR
-   response (opcode 0x50) is parsed and surfaced with its status + message (see
-   "Working and shipped"). Next roadmap step: **Step 11b — user-decided retry**
-   (defaulted `RetryContext` on the ops, exclusion-aware `selectServerForKey`,
-   `proxyToNonOwner` default true, thread-safe pool/topology). Retry policy /
-   idempotency stays the user's call. Full design + progress checklist:
-   [`ERROR_HANDLING_DESIGN.md`](ERROR_HANDLING_DESIGN.md); rationale in
-   [`DECISIONS.md`](DECISIONS.md) (2026-09-21 and 2026-09-25 entries). **Start
-   with the 11b checklist.**
+1. **Step 11b COMPLETE — user-decided retry shipped (slices 1–6).** (1) `selectServerForKey` routes
+   over the pure, unit-tested `orderKeyCandidates()` helper (owners → non-owner
+   fallback, minus an exclusion set), takes a defaulted `RetryContext`, reports
+   the nodes it tried via an out-param, and computes `ownersExhausted` honestly.
+   (2) Client-level `proxyToNonOwner` flag (default `true`, D5:
+   `setProxyToNonOwner`/`getProxyToNonOwner`) gates the owner→non-owner fallback;
+   when `false`, exhausting owners throws a transient exception with
+   `ownersExhausted=true` instead of proxying. (3) Op-level retry threading via a
+   **bound-view** API — base op signatures stay retry-free; `cache.excluding(nodes)`
+   / `cache.excluding(exception)` returns a `RetryView` that forwards to private
+   `…Impl(args, const RetryContext&)` methods, and every op (including the plain
+   first call) unions the nodes it tried into the thrown exception's `triedNodes`,
+   so a caught exception feeds straight back as the next attempt's exclusion set.
+   New public headers: `RetryContext.h`, `ServerSelection.h`, `RetryView.h`.
+   (4) Thread-safety: a single `stateMutex_` guards `topology_` +
+   `consistentHash_` + `connectionPool_` across the read-loop's topology callback
+   (`handleTopologyUpdate`) and user/retry threads (`selectServerForKey` →
+   `getConnectionForServer`); the connection pool holds `shared_ptr` and each op
+   keeps its connection alive for the operation's duration, so a concurrent
+   topology update can't free a connection mid-`execute()`.
+   (5) End-to-end integration coverage: `RetryViewIntegrationTest` (3 tests)
+   exercises `excluding()` dispatch — routes around an excluded owner, throws
+   `ownersExhausted` when proxy is disabled and all owners are excluded, and runs
+   the documented catch→`excluding(e)` retry loop after killing the primary owner.
+   (6) Retry-loop example `examples/quickstart/retry.cpp` (+ README section) —
+   `getWithRetry`/`putWithRetry` loops using `isTransient`/`outcomeUncertain`/
+   `excluding(e)`, and the clarification that `proxyToNonOwner` does not let a
+   caller skip the catch block. Retry policy/idempotency stays the user's call.
+   Full design + progress checklist:
+   [`ERROR_HANDLING_DESIGN.md`](ERROR_HANDLING_DESIGN.md) §5; rationale in
+   [`DECISIONS.md`](DECISIONS.md) (2026-09-21, 2026-09-25 entries). **Next: pick a
+   new roadmap step — Step 12 (bulk ops) or benchmark the multiplexing path.**
 2. **Benchmark the multiplexing path** — the async rewrite targets 5–10×
    concurrent throughput; this has not been measured yet.
 3. **Small cleanup:** read header "other params" when `paramCount > 0`
@@ -79,10 +100,23 @@ pull from here next. Step numbers follow
     classification helpers: `isTransient()` (futility — library's call) and
     `outcomeUncertain()` (ambiguity — 0x86/AfterSend). `COMMAND_TIMEOUT` (0x86)
     is transient **and** outcome-uncertain (intentionally diverges from Java).
-  - [ ] **11b — User-decided retry:** defaulted `RetryContext` on the ops
-    (fork 1.b), exclusion-aware `selectServerForKey`, `proxyToNonOwner` default
-    true, thread-safe pool/topology. Retry policy/idempotency is the user's
-    call, not automatic.
+  - [x] **11b — User-decided retry** — **shipped 2026-09-25**: exclusion-aware
+    `selectServerForKey`, `proxyToNonOwner` default true, a bound-view retry API
+    (fork 1.b), thread-safe pool/topology. Retry policy/idempotency is the
+    user's call, not automatic. **Slices 1–3:** exclusion-aware selection
+    via the pure `orderKeyCandidates()` helper (`ServerSelection.h`) +
+    `RetryContext` (`RetryContext.h`); client-level `proxyToNonOwner` flag
+    (default `true`); op-level retry threading via `RetryView`/`cache.excluding()`
+    (`RetryView.h`) with `triedNodes` unioned into every thrown exception (pure
+    `unionNodes()` helper). Base op signatures stay retry-free. **Slice 4
+    (thread-safety) done:** `stateMutex_` guards topology/hash/pool across the
+    read-loop and user/retry threads; pool is `shared_ptr` and each op keeps its
+    connection alive for its duration (no free mid-`execute()`). **Slice 5
+    (integration test):** `RetryViewIntegrationTest` (3 tests) covers `excluding()`
+    route-around, proxy-disabled owners-exhausted throw, and the catch→retry loop
+    after killing the primary owner. **Slice 6 (example):**
+    `examples/quickstart/retry.cpp` shows the retry loop and the `proxyToNonOwner`
+    clarification.
   Java ref: `org.infinispan.client.hotrod.exceptions.*`.
 - [ ] **Step 12 — Bulk operations.** `GET_ALL` (0x2F), `PUT_ALL` (0x2D),
   `BULK_GET` (0x1F, iterator-style).
@@ -146,14 +180,23 @@ multiplexing. See "Working and shipped" below._
   portability and `-Werror` build parity also landed (Sept 2026).
 
 **Test status (verified 2026-09-25):**
-- Unit: **187/187** passing (`./build/unit_tests`, <1s)
-- Integration: **78/78** passing across 15 suites (`ctest`, spins up Docker
+- Unit: **201/201** passing (`./build/unit_tests`, <1s) — +14 for
+  `ServerSelectionTest` (`orderKeyCandidates` + `unionNodes`, Step 11b slices 1–3)
+- Integration: **81/81** passing across 16 suites (`ctest`, spins up Docker
   Infinispan single-server + multi-node clusters), now also green on Linux CI.
+  +3 for `RetryViewIntegrationTest` (Step 11b: `excluding()` routes around an
+  owner; proxy-disabled owners-exhausted throw; the catch→`excluding(e)` retry
+  loop recovers after the primary owner is killed) — verified 3/3 this session.
   The interlaced distributed tests (`ConcurrentMultiServerTest`) were fixed to
   tolerate a GET racing ahead of its PUT — a `nullopt` is expected, only a
   present-but-wrong value is an error.
 - Full run: `ctest --test-dir build --output-on-failure` → 100% pass
-  (16 ctest tests: 1 unit + 15 integration suites)
+  (17 ctest tests: 1 unit + 16 integration suites)
+- **Concurrency validated (2026-09-25):** the concurrent suites pass 8/8
+  (incl. `ConcurrentWithFailover`), and a ThreadSanitizer run (`build-tsan/`)
+  reports **no races in production code** — slice-4's `stateMutex_`/`shared_ptr`
+  synchronization held clean. A test-harness race in `TopologyTestFixture.h`
+  `createClient()` (concurrent `push_back`) was fixed with a `clientsMutex`.
 - **Local caveat:** the multi-node cluster suites bind fixed host ports
   `11222/11322/11422/11522`; free `11222` (e.g. stop the `memory-service`
   Infinispan) before running them locally, or they fail with "port is already
@@ -169,6 +212,7 @@ full list (Steps 10–12, benchmarks, TLS, code TODOs).
 | What | Where |
 |------|-------|
 | Public API | `include/hotrod/RemoteCache.h` |
+| Retry API (bound view) | `include/hotrod/RetryView.h`, `RetryContext.h`; routing helpers in `ServerSelection.h` |
 | Async transport core | `src/transport/MultiplexedConnection.cpp` |
 | Operations (PING/GET/PUT/REMOVE) | `src/operations/RemoteCache.cpp` |
 | Codecs | `src/codec/`, `src/hash/`, `src/auth/`, `src/topology/` |
