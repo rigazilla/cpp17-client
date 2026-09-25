@@ -409,6 +409,10 @@ private:
     // them with its bound context. Each surfaces failures as a
     // HotRodClientException whose triedNodes is the union of the context's
     // excludeNodes and the nodes this attempt touched (see RemoteCache.cpp).
+    // Keyless operation (no routing object). Auto-fails over across all servers
+    // before send (selectAnyServer); after-send/server errors surface to the
+    // caller with triedNodes, retryable via a RetryView, exactly like keyed ops.
+    std::future<void> pingImpl(const RetryContext& ctx);
     std::future<std::optional<ByteArray>> getImpl(const ByteArray& key, const RetryContext& ctx);
     std::future<std::optional<EntryWithMetadata>> getWithMetadataImpl(const ByteArray& key, const RetryContext& ctx);
     std::future<std::optional<EntryWithMetadata>> putImpl(const ByteArray& key, const ByteArray& value,
@@ -489,6 +493,29 @@ private:
      */
     std::shared_ptr<MultiplexedConnection> selectServerForKey(const ByteArray& key,
                                               const RetryContext& ctx = {},
+                                              std::vector<ServerAddress>* triedOut = nullptr);
+
+    /**
+     * Select a connection for a keyless operation (e.g. ping), with the same
+     * before-send failover as selectServerForKey but over *all* servers rather
+     * than a key's owners (Step 11c). Candidates are every server in the current
+     * topology minus ctx.excludeNodes, in topology order (computed by
+     * orderKeyCandidates with an empty owner list); the first reachable one wins.
+     *
+     * Ping is often one of the first calls, before any topology has been received:
+     * when the topology has no servers this returns the seed connection_ so an
+     * early ping still works. Once real topology exists, exhausting it (all
+     * servers excluded or unreachable) throws instead of silently reusing an
+     * excluded seed.
+     *
+     * @param ctx      Retry/exclusion context (defaulted: no exclusions)
+     * @param triedOut If non-null, receives every node this call attempted.
+     * @return Connection to use (never null). shared_ptr for the same lifetime
+     *         reason as selectServerForKey. Acquires stateMutex_.
+     * @throws HotRodClientException (BeforeSend) if topology exists but no
+     *         candidate was reachable. ownersExhausted is always false (keyless).
+     */
+    std::shared_ptr<MultiplexedConnection> selectAnyServer(const RetryContext& ctx = {},
                                               std::vector<ServerAddress>* triedOut = nullptr);
 
     /**

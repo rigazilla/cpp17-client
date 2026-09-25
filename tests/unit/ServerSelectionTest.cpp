@@ -126,6 +126,39 @@ TEST(ServerSelectionTest, ProxyToNonOwnerFalseAllOwnersExcludedYieldsEmpty) {
     EXPECT_TRUE(out.empty());
 }
 
+// --- keyless candidate ordering (Step 11c): the empty-owner list that
+//     selectAnyServer() relies on for ping and other non-key operations. ---
+
+// With no owners (keyless op), every server is a candidate in topology order.
+TEST(ServerSelectionTest, KeylessNoOwnersYieldsAllServersInOrder) {
+    std::vector<ServerAddress> all = {addr("a", 1), addr("b", 2), addr("c", 3)};
+
+    auto out = orderKeyCandidates(/*owners=*/{}, all, /*exclude=*/{});
+
+    EXPECT_EQ(asKeys(out), (std::vector<std::string>{"a:1", "b:2", "c:3"}));
+}
+
+// Keyless selection still honors the exclusion set, so a retry avoids the node a
+// prior attempt tried.
+TEST(ServerSelectionTest, KeylessExcludesTriedNodes) {
+    std::vector<ServerAddress> all = {addr("a", 1), addr("b", 2), addr("c", 3)};
+
+    auto out = orderKeyCandidates(/*owners=*/{}, all, /*exclude=*/{addr("b", 2)});
+
+    EXPECT_EQ(asKeys(out), (std::vector<std::string>{"a:1", "c:3"}));
+}
+
+// Keyless with every server excluded yields no candidates — selectAnyServer then
+// throws a BeforeSend exhaustion (ownersExhausted=false for a keyless op).
+TEST(ServerSelectionTest, KeylessAllExcludedYieldsEmpty) {
+    std::vector<ServerAddress> all = {addr("a", 1), addr("b", 2)};
+
+    auto out = orderKeyCandidates(/*owners=*/{}, all,
+                                  /*exclude=*/{addr("a", 1), addr("b", 2)});
+
+    EXPECT_TRUE(out.empty());
+}
+
 // --- unionNodes: triedNodes accumulation across retries (Step 11b) ---
 
 // Union appends only new members, preserving the first list's order.

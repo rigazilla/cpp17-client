@@ -104,6 +104,11 @@ namespace hotrod
 
    std::future<void> RemoteCache::ping()
    {
+      return pingImpl(RetryContext{});
+   }
+
+   std::future<void> RemoteCache::pingImpl(const RetryContext &ctx)
+   {
       // Build request body (empty for PING)
       ByteArray requestBody;
 
@@ -235,16 +240,23 @@ namespace hotrod
          return {}; // PING doesn't return data
       };
 
-      // Use default connection (PING is not key-based)
-      auto responseFuture = connection_->execute(requestBody, 0x17, 0x18, bodyParser, cacheName_);
+      // PING is keyless: select any reachable server (auto before-send failover
+      // across the whole cluster, minus ctx.excludeNodes), recording tried nodes.
+      std::vector<ServerAddress> tried;
+      std::shared_ptr<MultiplexedConnection> conn = selectAnyServer(ctx, &tried);
 
-      // Transform Response → void
+      auto responseFuture = conn->execute(requestBody, 0x17, 0x18, bodyParser, cacheName_);
+
+      // Transform Response → void. On failure enrich the exception with the union
+      // of excluded + tried nodes so a caller can feed it back via excluding(e).
       return std::async(std::launch::deferred,
-                        [responseFuture = std::move(responseFuture)]() mutable
+                        [conn, responseFuture = std::move(responseFuture),
+                         tried = std::move(tried),
+                         excluded = ctx.excludeNodes]() mutable
                         {
                            Response resp = responseFuture.get();
                            if (resp.error)
-                              std::rethrow_exception(resp.error);
+                              rethrowWithTriedNodes(resp.error, tried, excluded);
                            // Success - return void
                         });
    }
@@ -974,6 +986,64 @@ namespace hotrod
 
       // Fallback: use default connection
       return connection_;
+   }
+
+   std::shared_ptr<MultiplexedConnection> RemoteCache::selectAnyServer(const RetryContext &ctx,
+                                                          std::vector<ServerAddress> *triedOut)
+   {
+      // Same lock/lifetime discipline as selectServerForKey (slice 4): guard the
+      // routing/pool state and keep the returned connection alive past the lock.
+      std::lock_guard<std::mutex> lock(stateMutex_);
+
+      std::vector<ServerAddress> allAddrs;
+      for (const auto &server : topology_.getServers())
+         allAddrs.push_back({server.host, server.port});
+
+      // Early ping: no topology received yet → nothing to route over, so use the
+      // seed connection so the very first ping still works.
+      if (allAddrs.empty())
+      {
+         if (triedOut)
+            triedOut->clear();
+         return connection_;
+      }
+
+      // Keyless candidates: every server minus the exclusion set, in topology
+      // order. Reuses the pure, unit-tested orderKeyCandidates() with an empty
+      // owner list (no key → no owners); the proxy flag is irrelevant here since
+      // there are no owners, so all servers come from the allServers pass.
+      std::vector<ServerAddress> candidates =
+          orderKeyCandidates({}, allAddrs, ctx.excludeNodes, true);
+
+      std::vector<ServerAddress> tried;
+      for (const auto &cand : candidates)
+      {
+         tried.push_back(cand);
+         try
+         {
+            std::shared_ptr<MultiplexedConnection> conn =
+                getConnectionForServer(ServerInfo(cand.host, cand.port, 0));
+            if (triedOut)
+               *triedOut = tried;
+            return conn;
+         }
+         catch (const std::exception &e)
+         {
+            fprintf(stderr, "[WARN] Failed to connect to %s:%u: %s\n",
+                    cand.host.c_str(), cand.port, e.what());
+            // Continue to next candidate
+         }
+      }
+
+      // Topology existed but every server was excluded or unreachable. Nothing was
+      // sent (BeforeSend). ownersExhausted is always false for a keyless op.
+      fprintf(stderr, "[WARN] No servers available for keyless operation\n");
+      if (triedOut)
+         *triedOut = tried;
+      throw HotRodClientException("No servers available in topology",
+                                  FailurePhase::BeforeSend, std::nullopt,
+                                  unionNodes(ctx.excludeNodes, tried),
+                                  /*ownersExhausted=*/false);
    }
 
    std::shared_ptr<MultiplexedConnection> RemoteCache::getConnectionForServer(const ServerInfo &server)

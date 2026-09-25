@@ -373,7 +373,9 @@ lifetime-footgun and keeps the error trivially copyable/loggable/storable.
       on/off; ownersExhausted. **Exclusion selection (slice 1), proxyToNonOwner
       on/off (slice 2), and union accumulation (slice 3) covered**
       (`ServerSelectionTest`, 14 tests). `RetryView` dispatch is exercised by the
-      integration test below (needs live servers).
+      integration test below (needs live servers). **Keyless-op ordering for
+      `selectAnyServer` added in Step 11c slice 1** (`ServerSelectionTest`, now 17
+      tests).
 - [x] Integration test: kill a node mid-run, user-loop retry lands on another —
       **slice 5** (`tests/integration/RetryViewIntegrationTest.cpp`, 3 tests):
       `excluding()` route-around (deterministic), proxy-disabled owners-exhausted
@@ -386,6 +388,30 @@ lifetime-footgun and keeps the error trivially copyable/loggable/storable.
       `getWithRetry`/`putWithRetry` loops (isTransient + outcomeUncertain +
       `excluding(e)`) and states that `proxyToNonOwner` does not let a caller skip
       the catch block. Builds warning-clean; runs end-to-end against a live server.
+
+### Step 11c — keyless-op retry (ping first)
+
+Keyless operations (no routing key/owner) get the same two-tier model: automatic
+before-send failover across all servers, user-decided after-send retry.
+
+- [x] `selectAnyServer(ctx, triedOut)` + `pingImpl(ctx)` + `RetryView::ping()` —
+      **slice 1** (`src/operations/RemoteCache.cpp`, `RemoteCache.h`,
+      `RetryView.h`). Routes via `orderKeyCandidates({}, allServers, exclude)`
+      (empty owners → all servers in topology order), sweeps to the next reachable
+      server before send, falls back to the seed connection when no topology is
+      known yet, and throws `BeforeSend`/`ownersExhausted=false` on exhaustion.
+      Unit: 3 keyless-ordering tests in `ServerSelectionTest`.
+- [x] Integration test: keyless `excluding().ping()` route-around; exclude-all
+      throws BeforeSend with `ownersExhausted=false`; catch→`excluding(e).ping()`
+      recovers after the first-candidate node is killed — **slice 2**
+      (`tests/integration/PingRetryIntegrationTest.cpp`, 3 tests, verified 3/3).
+- [x] Docs/example: `ping` retry in `examples/quickstart/retry.cpp` (a keyless
+      `pingWithRetry` loop) + README/DECISIONS — **slice 3**.
+
+**Divergence note:** Java's user-facing `CachePingOperation` (`supportRetry=true`)
+routes via the keyless round-robin balancer and auto-retries up to `maxRetries`;
+we use deterministic topology order and keep after-send retry user-decided (D2).
+`ownersExhausted` is always `false` for keyless ops (no owner concept).
 
 ---
 

@@ -501,3 +501,116 @@ exception the caller must catch and retry. This closes the open question from th
 retry branch. Keeping the example runnable against a plain single server (and
 pointing at `RetryViewIntegrationTest` for the kill-a-node scenario) was judged
 clearer than shipping an example that needs a cluster to run at all.
+
+## 2026-09-25 — Step 11c (slice 1): keyless-op retry — ping mirrors the keyed strategy
+
+**Decision.** Keyless operations get the *same* two-tier retry model as keyed ops
+(see 2026-09-21 / D2): (1) **automatic before-send failover** — when the chosen
+server is unreachable the client silently sweeps to the next server in topology
+order; (2) **user-decided after-send retry** — once a request has been sent, any
+AfterSend/ServerError failure surfaces as a `HotRodClientException` carrying
+`triedNodes`, and the caller retries via `cache.excluding(e).ping()`. Replay
+safety stays the caller's call. `ping()` is the first keyless op converted; the
+implementation is generic (`selectAnyServer`) so future non-key ops (server
+stats/admin) reuse it — satisfying the user's directive that this be *"the
+approach for all the non-key operations."*
+
+**Mechanism.** `ping()` now delegates to `pingImpl(const RetryContext&)` (the same
+base-call / `…Impl(ctx)` split every keyed op uses), and `RetryView::ping()`
+forwards the bound exclusion set. Routing goes through a new
+`selectAnyServer(ctx, triedOut)`, which reuses the pure, unit-tested
+`orderKeyCandidates({}, allServers, ctx.excludeNodes)` — an **empty owner list**
+means "every server is a candidate, in topology order, minus the exclusion set,"
+so no new pure helper was needed. It sweeps candidates, returning the first
+reachable connection (recording tried nodes via the out-param), and on total
+exhaustion throws `HotRodClientException{BeforeSend, ownersExhausted=false, …}`.
+
+**Two deliberate choices.**
+- **`ownersExhausted` is always `false` for keyless ops** — there is no "owner"
+  concept for a keyless request, so the flag that means "proxy was refused" is
+  meaningless here; the exhaustion is a plain BeforeSend "no servers reachable."
+- **Early-ping seed fallback (per user note).** Ping is typically one of the very
+  first operations, before any topology update has arrived, so
+  `selectAnyServer` returns the seed `connection_` when the topology is empty
+  (rather than throwing "no servers"). This preserves today's first-ping behavior
+  exactly (verified: `PingIntegrationTest` still 5/5).
+
+**Order divergence from Java (consistent with our keyed determinism).** Java's
+user-facing cache ping (`CachePingOperation`, `supportRetry=true`) routes via the
+keyless *round-robin* balancer and auto-retries across servers excluding a
+`failedServers` set up to `maxRetries`. We instead use **deterministic topology
+order** (matching our keyed-routing determinism divergence) and keep the
+after-send retry **user-decided** rather than automatic (D2). Java's other ping,
+`NoCachePingOperation` (`supportRetry=false`, per-connection health/liveness,
+force-written to one channel), has no user-facing analog here and is unaffected.
+
+**Tests.** 3 keyless-ordering unit tests added to `ServerSelectionTest`
+(`KeylessNoOwnersYieldsAllServersInOrder`, `KeylessExcludesTriedNodes`,
+`KeylessAllExcludedYieldsEmpty`) — 201→204, all green; `PingIntegrationTest` still
+5/5 with the new routing. Integration coverage for the kill-and-recover path is
+slice 2.
+
+## 2026-09-25 — Step 11c (slice 2): keyless-ping retry — end-to-end integration test
+
+**What shipped:** `tests/integration/PingRetryIntegrationTest.cpp` (3 tests,
+verified 3/3 against a live 3-node Docker cluster), wired into CMake/ctest as
+`PingRetryIntegrationTests`. It is the keyless mirror of
+`RetryViewIntegrationTest`, asserting that `ping()`'s `selectAnyServer` path
+behaves like the keyed retry path on real infrastructure:
+
+- **`ExcludingRoutesToAnotherServer`** (deterministic, no kill): a plain `ping()`
+  succeeds, and `cache.excluding({firstCandidate}).ping()` also succeeds — the
+  keyless op is routed to a different server.
+- **`AllServersExcludedThrowsBeforeSend`** (deterministic, no kill): excluding
+  every topology server leaves `selectAnyServer` no candidate and throws
+  `HotRodClientException{phase=BeforeSend}`, `isTransient==true`, with every
+  excluded server in `triedNodes`. Crucially it asserts **`ownersExhausted==false`**
+  — the one behavioural difference from the keyed
+  `ProxyDisabledOwnersExhaustedThrows` case (a keyless op has no owners).
+- **`RecoversAfterFirstCandidateKilled`** (kills a node): kills the server the
+  keyless ping targets first, then drives the documented catch→`excluding(e).ping()`
+  loop; asserts recovery on a surviving node, and — only if an exception was
+  caught — that the failure was transient and the killed node ended up in the
+  exclusion set.
+
+**Two integration-harness notes worth recording.**
+- **Topology reports internal container addresses.** On the Linux Docker bridge
+  the Hot Rod topology advertises container IPs (e.g. `172.18.0.2:11222`), which
+  the client reaches directly — *not* the published `localhost:1132x` ports the
+  test harness tracks. So a topology address cannot be mapped to a node number by
+  matching `MultiServerTestEnvironment` ports (returns -1). The test maps by
+  **topology position** instead (topology is ordered node1, node2, …), the same
+  convention `RetryViewIntegrationTest` already relies on.
+- **First observed recovery was via automatic before-send re-routing, not the
+  catch path.** Killing the first candidate node made `selectAnyServer`'s
+  connect to that node fail, so it swept to the next server *before sending* and
+  the very first `ping()` succeeded (no exception). The test tolerates both this
+  path and the throw-then-`excluding(e)` path, exactly as the keyed loop test
+  does — which path wins is a timing race we don't force with artificial fault
+  injection. The deterministic `excluding()` dispatch and the exhaustion throw
+  are fully covered by the two no-kill tests, so keyless routing does not depend
+  on that race.
+
+## 2026-09-25 — Step 11c (slice 3): keyless-ping retry example — **Step 11c complete**
+
+**What shipped:** `examples/quickstart/retry.cpp` gained a keyless `pingWithRetry`
+loop (built into the existing `retry` target), plus doc updates to
+`examples/quickstart/README.md` and `docs/ERROR_HANDLING_DESIGN.md` (a new Step 11c
+checklist block under §5). The loop is byte-for-byte the same shape as
+`getWithRetry` — retry-free first call, then `cache.excluding(e).ping()` seeded
+from the caught exception — underscoring that keyless ops need no special handling.
+`main()` calls `pingWithRetry` right after `connect()`, the realistic spot: ping is
+usually the first op, before any topology has arrived (the seed-connection fallback
+covers that). Compiles warning-clean under `-Wall -Wextra -Werror -pedantic` and
+runs end-to-end against a live single server (the retry branch only fires on a
+cluster with a node killed mid-run, as the file/README note; the kill scenario is
+covered by `PingRetryIntegrationTest`).
+
+**Doc note folded in.** The README/example spell out the one visible difference of
+the keyless path — a keyless exhaustion reports `ownersExhausted == false` (no
+owners) — so a reader porting the keyed loop to `ping` isn't surprised.
+
+With slices 1–3 done, **Step 11c is complete**: keyless ops mirror the keyed
+two-tier retry model (auto before-send failover, user-decided after-send), the
+implementation (`selectAnyServer`) is generic for future non-key ops, and the
+behaviour is unit-, integration-, and example-covered.
