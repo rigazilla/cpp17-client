@@ -1,5 +1,5 @@
 /**
- * Hot Rod C++ Client - User-Decided Retry Example (Step 11b)
+ * Hot Rod C++ Client - User-Decided Retry Example (Step 11b / 11c)
  *
  * The base operations (cache.get/put/...) never retry on their own: a failure
  * surfaces as a typed HotRodClientException carrying the facts you need to decide
@@ -28,6 +28,15 @@
  * connection, a server ERROR, a command timeout) still comes back to you as an
  * exception. The flag changes where the first attempt is *sent*; it does not make
  * retry automatic and does not remove the need to catch and retry yourself.
+ *
+ * KEYLESS operations follow the SAME pattern (Step 11c).
+ * ------------------------------------------------------------------------------
+ * ping() has no key, so it has no owners — it routes to any server (in topology
+ * order), automatically failing over to the next server before send, and
+ * surfacing after-send/server errors to you exactly like a keyed op. You retry it
+ * the same way, via cache.excluding(e).ping(). The only visible difference is that
+ * a keyless exhaustion reports ownersExhausted == false (there are no owners). See
+ * pingWithRetry() below.
  */
 
 #include "hotrod/RemoteCache.h"
@@ -75,6 +84,32 @@ std::optional<ByteArray> getWithRetry(RemoteCache& cache, const ByteArray& key,
                 throw;
             }
             // Carry the tried nodes forward as the next attempt's exclusion set.
+            excluded = e.triedNodes;
+        }
+    }
+}
+
+// A keyless retry loop (Step 11c). ping() has no key/owner, so selection tries
+// every server in topology order; the loop is identical to getWithRetry() — plain
+// first call, then cache.excluding(e).ping() seeded from the failure. ping is
+// naturally idempotent, so it is always safe to replay. On exhaustion the thrown
+// exception reports ownersExhausted == false (a keyless op has no owners).
+void pingWithRetry(RemoteCache& cache, int maxAttempts = 4) {
+    std::vector<ServerAddress> excluded;
+
+    for (int attempt = 1; ; ++attempt) {
+        try {
+            if (excluded.empty())
+                cache.ping().get();
+            else
+                cache.excluding(excluded).ping().get();
+            return;
+        } catch (const HotRodClientException& e) {
+            std::cerr << "  ping attempt " << attempt << " failed: " << e.what()
+                      << "  (tried " << e.triedNodes.size() << " node(s))\n";
+
+            if (!isTransient(e)) throw;
+            if (attempt >= maxAttempts) throw;
             excluded = e.triedNodes;
         }
     }
@@ -133,6 +168,12 @@ int main() {
         std::cout << "Connecting...\n";
         cache.connect();
         std::cout << "Connected.\n\n";
+
+        // Keyless op: ping is usually one of the first calls, before any topology
+        // has arrived; it routes to any server and fails over the same way.
+        std::cout << "--- PING with retry (keyless) ---\n";
+        pingWithRetry(cache);
+        std::cout << "PING ok\n\n";
 
         std::string keyStr = "retry-demo-key";
         std::string valueStr = "retry-demo-value";

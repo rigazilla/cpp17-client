@@ -33,7 +33,26 @@ _(Full per-session workflow: [`WORKFLOW.md`](WORKFLOW.md).)_
 
 _The 1–3 concrete things to do next. Keep this short and current._
 
-1. **Step 11b COMPLETE — user-decided retry shipped (slices 1–6).** (1) `selectServerForKey` routes
+1. **Step 11c COMPLETE — keyless-op retry (ping) shipped (slices 1–3).** Keyless
+   operations now mirror the keyed retry strategy: automatic before-send failover
+   across all servers, user-decided after-send retry (D2). `ping()` routes through
+   `selectAnyServer(ctx, triedOut)`, which orders candidates via
+   `orderKeyCandidates({}, allServers, exclude)` (empty owners → all servers in
+   topology order), sweeps to the next server when one is unreachable, and — when
+   no topology is known yet (ping is often the very first op) — falls back to the
+   seed connection. `RetryView::ping()` forwards the exclusion set, so
+   `cache.excluding(e).ping()` works exactly like keyed ops; `ownersExhausted` is
+   always `false` for keyless ops. (1) `pingImpl` + `selectAnyServer` in
+   `RemoteCache.cpp`, 3 keyless-ordering unit tests; (2) `PingRetryIntegrationTest`
+   (3 tests) — `excluding()` routes the keyless ping to another server, excluding
+   all servers throws BeforeSend with `ownersExhausted=false`, and the
+   catch→`excluding(e).ping()` loop recovers after the first-candidate node is
+   killed; (3) `examples/quickstart/retry.cpp` gained a keyless `pingWithRetry`
+   loop + README/ERROR_HANDLING docs. The implementation is generic, so future
+   non-key ops (server stats/admin) reuse `selectAnyServer`. Rationale in
+   [`DECISIONS.md`](DECISIONS.md) (2026-09-25 Step 11c entries). **Next: pick a new
+   roadmap step — Step 12 (bulk ops) or benchmark the multiplexing path.**
+2. **Step 11b COMPLETE — user-decided retry shipped (slices 1–6).** (1) `selectServerForKey` routes
    over the pure, unit-tested `orderKeyCandidates()` helper (owners → non-owner
    fallback, minus an exclusion set), takes a defaulted `RetryContext`, reports
    the nodes it tried via an out-param, and computes `ownersExhausted` honestly.
@@ -63,11 +82,10 @@ _The 1–3 concrete things to do next. Keep this short and current._
    caller skip the catch block. Retry policy/idempotency stays the user's call.
    Full design + progress checklist:
    [`ERROR_HANDLING_DESIGN.md`](ERROR_HANDLING_DESIGN.md) §5; rationale in
-   [`DECISIONS.md`](DECISIONS.md) (2026-09-21, 2026-09-25 entries). **Next: pick a
-   new roadmap step — Step 12 (bulk ops) or benchmark the multiplexing path.**
-2. **Benchmark the multiplexing path** — the async rewrite targets 5–10×
+   [`DECISIONS.md`](DECISIONS.md) (2026-09-21, 2026-09-25 entries).
+3. **Benchmark the multiplexing path** — the async rewrite targets 5–10×
    concurrent throughput; this has not been measured yet.
-3. **Small cleanup:** read header "other params" when `paramCount > 0`
+4. **Small cleanup:** read header "other params" when `paramCount > 0`
    (two `TODO`s in `src/operations/RemoteCache.cpp:140,182`).
 
 ---
@@ -150,6 +168,11 @@ multiplexing. See "Working and shipped" below._
 - Hash-aware routing → primary owner, with automatic failover
 - Connection pooling (one connection per server)
 - **Full CRUD:** PING / GET / PUT / REMOVE
+- **Keyless-op retry (Step 11c):** `ping()` routes through `selectAnyServer` —
+  automatic before-send failover across all servers (topology order, minus an
+  exclusion set), seed-connection fallback when no topology is known yet, and
+  user-decided after-send retry via `cache.excluding(e).ping()`. Same strategy
+  intended for all future non-key ops; `ownersExhausted` always `false`
 - **getWithMetadata** (0x1B/0x1C) — value + entry version/expiration metadata,
   the entry point for version-based CAS (Step 10)
 - **removeWithVersion** (0x0D/0x0E) — version-based conditional remove (CAS);
@@ -180,18 +203,23 @@ multiplexing. See "Working and shipped" below._
   portability and `-Werror` build parity also landed (Sept 2026).
 
 **Test status (verified 2026-09-25):**
-- Unit: **201/201** passing (`./build/unit_tests`, <1s) — +14 for
-  `ServerSelectionTest` (`orderKeyCandidates` + `unionNodes`, Step 11b slices 1–3)
-- Integration: **81/81** passing across 16 suites (`ctest`, spins up Docker
+- Unit: **204/204** passing (`./build/unit_tests`, <1s) — +17 for
+  `ServerSelectionTest` (`orderKeyCandidates` + `unionNodes`, Step 11b slices 1–3;
+  +3 keyless-ordering tests for `selectAnyServer`, Step 11c slice 1)
+- Integration: **84/84** passing across 17 suites (`ctest`, spins up Docker
   Infinispan single-server + multi-node clusters), now also green on Linux CI.
   +3 for `RetryViewIntegrationTest` (Step 11b: `excluding()` routes around an
   owner; proxy-disabled owners-exhausted throw; the catch→`excluding(e)` retry
   loop recovers after the primary owner is killed) — verified 3/3 this session.
+  +3 for `PingRetryIntegrationTest` (Step 11c: keyless `excluding().ping()` routes
+  to another server; excluding all servers throws BeforeSend with
+  `ownersExhausted=false`; the catch→`excluding(e).ping()` loop recovers after the
+  first-candidate node is killed) — verified 3/3 this session.
   The interlaced distributed tests (`ConcurrentMultiServerTest`) were fixed to
   tolerate a GET racing ahead of its PUT — a `nullopt` is expected, only a
   present-but-wrong value is an error.
 - Full run: `ctest --test-dir build --output-on-failure` → 100% pass
-  (17 ctest tests: 1 unit + 16 integration suites)
+  (18 ctest tests: 1 unit + 17 integration suites)
 - **Concurrency validated (2026-09-25):** the concurrent suites pass 8/8
   (incl. `ConcurrentWithFailover`), and a ThreadSanitizer run (`build-tsan/`)
   reports **no races in production code** — slice-4's `stateMutex_`/`shared_ptr`

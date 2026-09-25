@@ -36,6 +36,10 @@ public:
     RetryView(RemoteCache& cache, RetryContext ctx)
         : cache_(&cache), ctx_(std::move(ctx)) {}
 
+    std::future<void> ping() {
+        return cache_->pingImpl(ctx_);
+    }
+
     std::future<std::optional<ByteArray>> get(const ByteArray& key) {
         return cache_->getImpl(key, ctx_);
     }

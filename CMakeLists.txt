@@ -298,6 +298,18 @@ if(GTest_FOUND)
             # Note: NOT gtest_main - we provide our own main()
     )
 
+    # Ping keyless-op retry (Step 11c) integration tests (multi-server)
+    add_executable(pingretry_integration_tests
+        tests/integration/PingRetryIntegrationTest.cpp
+    )
+
+    target_link_libraries(pingretry_integration_tests
+        PRIVATE
+            hotrod-client
+            GTest::gtest
+            # Note: NOT gtest_main - we provide our own main()
+    )
+
     add_test(NAME PingIntegrationTests COMMAND ping_integration_tests)
     add_test(NAME GetIntegrationTests COMMAND get_integration_tests)
     add_test(NAME GetWithMetadataIntegrationTests COMMAND getwithmetadata_integration_tests)
@@ -314,6 +326,7 @@ if(GTest_FOUND)
     add_test(NAME HashAwareRoutingIntegrationTests COMMAND hash_aware_routing_integration_tests)
     add_test(NAME ConcurrentMultiServerTests COMMAND concurrent_multiserver_tests)
     add_test(NAME RetryViewIntegrationTests COMMAND retryview_integration_tests)
+    add_test(NAME PingRetryIntegrationTests COMMAND pingretry_integration_tests)
 
     # Set working directory so scripts can be found
     set_tests_properties(PingIntegrationTests PROPERTIES
@@ -377,6 +390,10 @@ if(GTest_FOUND)
         LABELS "integration;docker;concurrent;multi-server"
     )
     set_tests_properties(RetryViewIntegrationTests PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        LABELS "integration;docker;topology;multi-server;retry"
+    )
+    set_tests_properties(PingRetryIntegrationTests PROPERTIES
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         LABELS "integration;docker;topology;multi-server;retry"
     )

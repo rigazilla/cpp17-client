@@ -127,7 +127,7 @@ cache.disconnect();
 
 ## User-Decided Retry (`retry` example)
 
-`retry.cpp` demonstrates Step 11b — **the client never retries on its own**.
+`retry.cpp` demonstrates Step 11b/11c — **the client never retries on its own**.
 A failure surfaces as a typed `HotRodClientException` carrying the facts you need
 (which phase it failed in, which nodes were already tried); you opt into a retry
 explicitly, on the failure path, via `cache.excluding(e)`:
@@ -161,6 +161,31 @@ knowledge of the op before replaying a non-idempotent write.
 > still comes back to you as an exception. The flag changes where the first
 > attempt is *sent*; it does not make retry automatic.
 
+**Keyless operations retry the same way (Step 11c).** `ping()` has no key and so
+no owners; it routes to any server in topology order, automatically fails over to
+the next server *before send*, and surfaces after-send/server errors to you just
+like a keyed op — so you retry it with `cache.excluding(e).ping()`:
+
+```cpp
+std::vector<ServerAddress> excluded;
+for (int attempt = 1; ; ++attempt) {
+    try {
+        if (excluded.empty()) cache.ping().get();
+        else                  cache.excluding(excluded).ping().get();
+        return;
+    } catch (const HotRodClientException& e) {
+        if (!isTransient(e)) throw;   // ping is idempotent — always safe to replay
+        excluded = e.triedNodes;
+    }
+}
+```
+
+The only visible difference from a keyed op: a keyless exhaustion reports
+`ownersExhausted == false` (there are no owners). The example calls
+`pingWithRetry()` right after connecting, since `ping` is typically the first op —
+often before any topology has arrived, in which case it falls back to the seed
+connection.
+
 Build it alongside `quickstart` (both targets are in `CMakeLists.txt`):
 
 ```bash
@@ -169,13 +194,14 @@ cd build && cmake .. && make        # builds quickstart and retry
 ```
 
 Run it against a **cluster** and kill an owner node mid-run to actually exercise
-the retry path (the same scenario covered by
-`tests/integration/RetryViewIntegrationTest.cpp`).
+the retry path (the same scenarios are covered by
+`tests/integration/RetryViewIntegrationTest.cpp` for keyed ops and
+`tests/integration/PingRetryIntegrationTest.cpp` for keyless `ping`).
 
 ## Files
 
 - `quickstart.cpp` - Basic PUT/GET/REMOVE example
-- `retry.cpp` - User-decided retry loop (Step 11b)
+- `retry.cpp` - User-decided retry loop, keyed + keyless `ping` (Step 11b/11c)
 - `CMakeLists.txt` - Build configuration (builds both examples)
 - `start-server.sh` - Script to start Infinispan server
 - `stop-server.sh` - Script to stop Infinispan server
