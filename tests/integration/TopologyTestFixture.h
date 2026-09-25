@@ -9,6 +9,7 @@
 #include <string>
 #include <thread>
 #include <chrono>
+#include <mutex>
 
 namespace hotrod {
 namespace test {
@@ -102,7 +103,16 @@ protected:
         client->connect();
 
         RemoteCache* ptr = client.get();
-        clients.push_back(std::move(client));
+        // Tests may call createClient() concurrently from several threads (e.g.
+        // ConcurrentMultiServerTest.MultipleClientsInterlaced), so guard the
+        // shared vector: std::vector::push_back is not safe for concurrent
+        // callers (a reallocation moves the buffer out from under another
+        // thread). This lock keeps TSan runs clean so real production races stay
+        // visible.
+        {
+            std::lock_guard<std::mutex> lock(clientsMutex);
+            clients.push_back(std::move(client));
+        }
 
         return ptr;
     }
@@ -225,8 +235,11 @@ protected:
         MultiServerTestEnvironment::waitForClusterSize(currentSize - 1);
     }
 
-    // Storage for created clients (auto-cleanup in TearDown)
+    // Storage for created clients (auto-cleanup in TearDown).
+    // Guarded by clientsMutex because createClient() can be called concurrently;
+    // TearDown runs single-threaded after all worker threads have joined.
     std::vector<std::unique_ptr<RemoteCache>> clients;
+    std::mutex clientsMutex;
 };
 
 } // namespace test

@@ -5,14 +5,18 @@
 #include "MultiplexedConnection.h"
 #include "HeaderCodec.h"
 #include "ConsistentHash.h"
+#include "RetryContext.h"
 #include <string>
 #include <memory>
 #include <cstdint>
 #include <map>
 #include <future>
 #include <optional>
+#include <mutex>
 
 namespace hotrod {
+
+class RetryView;  // bound exclusion-aware view; defined in RetryView.h
 
 /**
  * High-level Hot Rod client API.
@@ -320,41 +324,137 @@ public:
     }
 
     /**
+     * Control non-owner proxy fallback for hash-aware routing (Step 11b, D5).
+     *
+     * When true (the default, matching the Java client), if none of a key's
+     * owners can be reached, selection falls through to any other server in the
+     * topology, which proxies the request to the real owner. When false,
+     * selection stops once the owners are exhausted and throws a transient
+     * HotRodClientException with ownersExhausted=true, letting the caller decide
+     * whether to drive the proxy step itself.
+     *
+     * This governs the BeforeSend connection-fallback in selectServerForKey
+     * only; it does not make retry automatic (retry stays user-decided, D2).
+     */
+    void setProxyToNonOwner(bool proxyToNonOwner) {
+        proxyToNonOwner_ = proxyToNonOwner;
+    }
+
+    /**
+     * Whether non-owner proxy fallback is enabled (default true).
+     */
+    bool getProxyToNonOwner() const {
+        return proxyToNonOwner_;
+    }
+
+    /**
      * Get current topology information.
      * Only populated if client intelligence is TOPOLOGY_AWARE or HASH_DISTRIBUTION_AWARE.
+     *
+     * Thread-safety: returns a reference to internal state that the read-loop
+     * thread mutates under stateMutex_ on topology updates. It is a
+     * testing/debugging accessor and must NOT be read concurrently with live
+     * operations or topology churn. Use getTopologyId() (locked, by value) for a
+     * safe point-in-time read.
      */
     const TopologyInfo& getTopology() const {
         return topology_;
     }
 
     /**
-     * Get current topology ID.
+     * Get current topology ID (thread-safe: read under stateMutex_).
      */
     VInt getTopologyId() const {
+        std::lock_guard<std::mutex> lock(stateMutex_);
         return topology_.getTopologyId();
     }
 
     /**
      * Get the ConsistentHash instance (for testing/debugging).
+     *
+     * Thread-safety: same caveat as getTopology() — returns a reference to state
+     * the read-loop mutates under stateMutex_; not safe to read concurrently with
+     * live operations or topology churn.
      */
     const ConsistentHash& getConsistentHash() const {
         return consistentHash_;
     }
 
+    /**
+     * Return a bound view of this cache that excludes the given nodes from
+     * routing (Step 11b). The base operations stay retry-free; a caller opts into
+     * exclusion only on the retry path, seeding it from a caught exception:
+     *
+     *   try { return cache.get(key).get(); }
+     *   catch (const HotRodClientException& e) {
+     *       if (!isTransient(e)) throw;              // + your idempotency call
+     *       return cache.excluding(e).get(key).get();  // avoids e.triedNodes
+     *   }
+     *
+     * The returned RetryView is non-owning and must not outlive this cache.
+     */
+    RetryView excluding(std::vector<ServerAddress> excludeNodes);
+
+    /**
+     * Convenience overload: exclude exactly the nodes a prior attempt tried,
+     * as reported by the exception (uses e.triedNodes).
+     */
+    RetryView excluding(const HotRodClientException& e);
+
 private:
+    friend class RetryView;  // forwards to the *Impl methods below
+
+    // Exclusion-aware implementations behind the public retry-free operations.
+    // The public ops call these with an empty RetryContext; a RetryView calls
+    // them with its bound context. Each surfaces failures as a
+    // HotRodClientException whose triedNodes is the union of the context's
+    // excludeNodes and the nodes this attempt touched (see RemoteCache.cpp).
+    std::future<std::optional<ByteArray>> getImpl(const ByteArray& key, const RetryContext& ctx);
+    std::future<std::optional<EntryWithMetadata>> getWithMetadataImpl(const ByteArray& key, const RetryContext& ctx);
+    std::future<std::optional<EntryWithMetadata>> putImpl(const ByteArray& key, const ByteArray& value,
+                                                          uint64_t lifespan, uint64_t maxIdle, bool previousValue,
+                                                          const RetryContext& ctx);
+    std::future<std::optional<EntryWithMetadata>> putIfAbsentImpl(const ByteArray& key, const ByteArray& value,
+                                                                  uint64_t lifespan, uint64_t maxIdle, bool previousValue,
+                                                                  const RetryContext& ctx);
+    std::future<std::optional<EntryWithMetadata>> replaceImpl(const ByteArray& key, const ByteArray& value,
+                                                              uint64_t lifespan, uint64_t maxIdle, bool previousValue,
+                                                              const RetryContext& ctx);
+    std::future<bool> containsKeyImpl(const ByteArray& key, const RetryContext& ctx);
+    std::future<std::optional<EntryWithMetadata>> removeImpl(const ByteArray& key, bool previousValue,
+                                                             const RetryContext& ctx);
+    std::future<bool> removeWithVersionImpl(const ByteArray& key, int64_t version, const RetryContext& ctx);
+    std::future<bool> replaceWithVersionImpl(const ByteArray& key, const ByteArray& value,
+                                             int64_t version, uint64_t lifespan, uint64_t maxIdle,
+                                             const RetryContext& ctx);
+
     std::string host_;
     uint16_t port_;
     std::string cacheName_;
-    std::unique_ptr<MultiplexedConnection> connection_;
+    // shared_ptr (not unique_ptr) so a connection handed to an in-flight
+    // operation stays alive even if a concurrent topology update evicts it from
+    // the pool (see selectServerForKey / cleanupStaleConnections, Step 11b slice 4).
+    std::shared_ptr<MultiplexedConnection> connection_;
     // Note: messageIdCounter_ removed - MultiplexedConnection generates IDs
     uint8_t protocolVersion_;  // Protocol version (default: VERSION_41)
     ClientIntelligence clientIntelligence_;  // Client intelligence level
+    bool proxyToNonOwner_ = true;  // Owner->non-owner fallback in routing (D5)
+
+    // stateMutex_ guards the routing/pool state below (topology_, consistentHash_,
+    // connectionPool_) against concurrent access by the read-loop thread (topology
+    // callbacks → handleTopologyUpdate) and user/retry threads (ops →
+    // selectServerForKey → getConnectionForServer). Mutable so the const
+    // getTopologyId() accessor can lock it. Lock discipline: the two public entry
+    // points (handleTopologyUpdate, selectServerForKey) acquire it at the top;
+    // their internal helpers (cleanupStaleConnections, getConnectionForServer)
+    // assume it is already held and must not re-lock.
+    mutable std::mutex stateMutex_;
     TopologyInfo topology_;  // Current cluster topology
     ConsistentHash consistentHash_;  // Hash-aware routing (for HASH_DISTRIBUTION_AWARE)
 
     // Connection pool: one MultiplexedConnection per server
     // Key = "host:port", Value = MultiplexedConnection instance
-    std::map<std::string, std::unique_ptr<MultiplexedConnection>> connectionPool_;
+    std::map<std::string, std::shared_ptr<MultiplexedConnection>> connectionPool_;
 
     /**
      * Handle topology update callback from MultiplexedConnection.
@@ -371,24 +471,48 @@ private:
      *
      * Otherwise falls back to the default connection.
      *
-     * @param key The key to route
-     * @return Connection to use for this key (never null)
+     * Exclusion-aware (Step 11b): nodes in @p ctx.excludeNodes are skipped, so a
+     * user-driven retry avoids the nodes a prior attempt already tried. The
+     * ordered candidate list (owners first, then non-owner proxy fallback, minus
+     * excluded nodes) is computed by the pure orderKeyCandidates() helper.
+     *
+     * @param key      The key to route
+     * @param ctx      Retry/exclusion context (defaulted: no exclusions)
+     * @param triedOut If non-null, receives every node this call attempted, in
+     *                 order — for accumulating triedNodes across retries.
+     * @return Connection to use for this key (never null). Returned as a
+     *         shared_ptr so it stays alive for the duration of the operation even
+     *         if a concurrent topology update evicts it from the pool. Acquires
+     *         stateMutex_.
+     * @throws HotRodClientException (BeforeSend) if no candidate was reachable;
+     *         ownersExhausted is set iff every owner was tried or excluded.
      */
-    MultiplexedConnection* selectServerForKey(const ByteArray& key);
+    std::shared_ptr<MultiplexedConnection> selectServerForKey(const ByteArray& key,
+                                              const RetryContext& ctx = {},
+                                              std::vector<ServerAddress>* triedOut = nullptr);
 
     /**
      * Get or create connection for a specific server.
      *
+     * Caller must hold stateMutex_ (invoked from selectServerForKey); this method
+     * does not lock.
+     *
      * @param server Server information (host, port, hashId)
      * @return MultiplexedConnection to the server (never null)
      */
-    MultiplexedConnection* getConnectionForServer(const ServerInfo& server);
+    std::shared_ptr<MultiplexedConnection> getConnectionForServer(const ServerInfo& server);
 
     /**
      * Clean up connections to servers no longer in topology.
-     * Called after topology updates.
+     * Called after topology updates. Caller must hold stateMutex_
+     * (invoked from handleTopologyUpdate); this method does not lock.
      */
     void cleanupStaleConnections();
 };
 
 } // namespace hotrod
+
+// RetryView completes the excluding()/RetryView pairing; included last so
+// RemoteCache is a complete type. (Include-guarded, so the mutual include of
+// RemoteCache.h from RetryView.h is a no-op here.)
+#include "RetryView.h"

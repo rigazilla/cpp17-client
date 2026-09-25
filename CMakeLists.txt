@@ -90,6 +90,7 @@ if(GTest_FOUND)
         tests/unit/ContainsKeyTest.cpp
         tests/unit/HashAwareRoutingTest.cpp
         tests/unit/ErrorHandlingTest.cpp
+        tests/unit/ServerSelectionTest.cpp
     )
 
     target_link_libraries(unit_tests
@@ -285,6 +286,18 @@ if(GTest_FOUND)
             # Note: NOT gtest_main - we provide our own main()
     )
 
+    # RetryView (Step 11b user-decided retry) integration tests (multi-server)
+    add_executable(retryview_integration_tests
+        tests/integration/RetryViewIntegrationTest.cpp
+    )
+
+    target_link_libraries(retryview_integration_tests
+        PRIVATE
+            hotrod-client
+            GTest::gtest
+            # Note: NOT gtest_main - we provide our own main()
+    )
+
     add_test(NAME PingIntegrationTests COMMAND ping_integration_tests)
     add_test(NAME GetIntegrationTests COMMAND get_integration_tests)
     add_test(NAME GetWithMetadataIntegrationTests COMMAND getwithmetadata_integration_tests)
@@ -300,6 +313,7 @@ if(GTest_FOUND)
     add_test(NAME ConcurrentClientsTests COMMAND concurrent_clients_tests)
     add_test(NAME HashAwareRoutingIntegrationTests COMMAND hash_aware_routing_integration_tests)
     add_test(NAME ConcurrentMultiServerTests COMMAND concurrent_multiserver_tests)
+    add_test(NAME RetryViewIntegrationTests COMMAND retryview_integration_tests)
 
     # Set working directory so scripts can be found
     set_tests_properties(PingIntegrationTests PROPERTIES
@@ -361,6 +375,10 @@ if(GTest_FOUND)
     set_tests_properties(ConcurrentMultiServerTests PROPERTIES
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         LABELS "integration;docker;concurrent;multi-server"
+    )
+    set_tests_properties(RetryViewIntegrationTests PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        LABELS "integration;docker;topology;multi-server;retry"
     )
     endif()  # NOT WIN32 (integration tests)
 

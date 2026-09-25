@@ -1,11 +1,35 @@
 #include "hotrod/RemoteCache.h"
+#include "hotrod/RetryView.h"
 #include "hotrod/Codec.h"
 #include "hotrod/HotRodClientException.h"
+#include "hotrod/ServerSelection.h"
 #include <stdexcept>
 #include <set>
+#include <algorithm>
 
 namespace hotrod
 {
+   namespace
+   {
+      // Rethrow a failed Response's error, enriching a HotRodClientException with
+      // the union of nodes tried across this and prior attempts so a caller can
+      // feed e.triedNodes back as the next attempt's exclusion set. Non-HotRod
+      // exceptions propagate unchanged. Always throws.
+      [[noreturn]] void rethrowWithTriedNodes(std::exception_ptr eptr,
+                                              const std::vector<ServerAddress> &tried,
+                                              const std::vector<ServerAddress> &excluded)
+      {
+         try
+         {
+            std::rethrow_exception(eptr);
+         }
+         catch (HotRodClientException &e)
+         {
+            e.triedNodes = unionNodes(unionNodes(excluded, tried), e.triedNodes);
+            throw;
+         }
+      }
+   } // namespace
 
    RemoteCache::RemoteCache(const std::string &host, uint16_t port)
        : host_(host), port_(port), cacheName_(""),
@@ -17,7 +41,7 @@ namespace hotrod
       {
          this->handleTopologyUpdate(topo, cacheName);
       };
-      connection_ = std::make_unique<MultiplexedConnection>(host, port, topologyCallback);
+      connection_ = std::make_shared<MultiplexedConnection>(host, port, topologyCallback);
    }
 
    RemoteCache::RemoteCache(const std::string &host, uint16_t port, const std::string &cacheName)
@@ -30,7 +54,7 @@ namespace hotrod
       {
          this->handleTopologyUpdate(topo, cacheName);
       };
-      connection_ = std::make_unique<MultiplexedConnection>(host, port, topologyCallback);
+      connection_ = std::make_shared<MultiplexedConnection>(host, port, topologyCallback);
    }
 
    RemoteCache::~RemoteCache()
@@ -60,6 +84,11 @@ namespace hotrod
 
    void RemoteCache::handleTopologyUpdate(const TopologyInfo &topo, const std::string & /*cacheName*/)
    {
+      // Runs on a connection's read-loop thread. Guard the routing/pool state
+      // against user/retry threads in selectServerForKey (slice 4). cleanup below
+      // runs with the lock held (it must not re-lock).
+      std::lock_guard<std::mutex> lock(stateMutex_);
+
       // Update topology
       topology_ = topo;
 
@@ -222,6 +251,11 @@ namespace hotrod
 
    std::future<std::optional<ByteArray>> RemoteCache::get(const ByteArray &key)
    {
+      return getImpl(key, RetryContext{});
+   }
+
+   std::future<std::optional<ByteArray>> RemoteCache::getImpl(const ByteArray &key, const RetryContext &ctx)
+   {
       // Build request body (just the key)
       ByteArray requestBody;
       Codec::writeByteArray(requestBody, key);
@@ -244,8 +278,9 @@ namespace hotrod
          return conn->receiveByteArray();
       };
 
-      // Select connection (hash-aware routing or default)
-      MultiplexedConnection *conn = selectServerForKey(key);
+      // Select connection (hash-aware routing or default), recording tried nodes
+      std::vector<ServerAddress> tried;
+      std::shared_ptr<MultiplexedConnection> conn = selectServerForKey(key, ctx, &tried);
 
       // Execute and get Response future
       auto responseFuture = conn->execute(
@@ -257,13 +292,15 @@ namespace hotrod
 
       // Transform Response → std::optional<ByteArray>
       return std::async(std::launch::deferred,
-                        [responseFuture = std::move(responseFuture)]() mutable -> std::optional<ByteArray>
+                        [conn, responseFuture = std::move(responseFuture),
+                         tried = std::move(tried),
+                         excluded = ctx.excludeNodes]() mutable -> std::optional<ByteArray>
                         {
                            Response resp = responseFuture.get();
 
                            if (resp.error)
                            {
-                              std::rethrow_exception(resp.error);
+                              rethrowWithTriedNodes(resp.error, tried, excluded);
                            }
 
                            if (resp.status == 0x00 && resp.body.has_value())
@@ -276,6 +313,11 @@ namespace hotrod
    }
 
    std::future<std::optional<EntryWithMetadata>> RemoteCache::getWithMetadata(const ByteArray &key)
+   {
+      return getWithMetadataImpl(key, RetryContext{});
+   }
+
+   std::future<std::optional<EntryWithMetadata>> RemoteCache::getWithMetadataImpl(const ByteArray &key, const RetryContext &ctx)
    {
       // Build request body (just the key) - identical to GET
       ByteArray requestBody;
@@ -303,8 +345,9 @@ namespace hotrod
          return entry;
       };
 
-      // Select connection (hash-aware routing or default)
-      MultiplexedConnection *conn = selectServerForKey(key);
+      // Select connection (hash-aware routing or default), recording tried nodes
+      std::vector<ServerAddress> tried;
+      std::shared_ptr<MultiplexedConnection> conn = selectServerForKey(key, ctx, &tried);
 
       // Execute and get Response future
       auto responseFuture = conn->execute(
@@ -316,13 +359,15 @@ namespace hotrod
 
       // Transform Response → std::optional<EntryWithMetadata>
       return std::async(std::launch::deferred,
-                        [responseFuture = std::move(responseFuture)]() mutable -> std::optional<EntryWithMetadata>
+                        [conn, responseFuture = std::move(responseFuture),
+                         tried = std::move(tried),
+                         excluded = ctx.excludeNodes]() mutable -> std::optional<EntryWithMetadata>
                         {
                            Response resp = responseFuture.get();
 
                            if (resp.error)
                            {
-                              std::rethrow_exception(resp.error);
+                              rethrowWithTriedNodes(resp.error, tried, excluded);
                            }
 
                            if (resp.status == 0x00 && resp.body.has_value())
@@ -336,6 +381,13 @@ namespace hotrod
 
    std::future<std::optional<EntryWithMetadata>> RemoteCache::put(const ByteArray &key, const ByteArray &value,
                                                           uint64_t lifespan, uint64_t maxIdle, bool previousValue)
+   {
+      return putImpl(key, value, lifespan, maxIdle, previousValue, RetryContext{});
+   }
+
+   std::future<std::optional<EntryWithMetadata>> RemoteCache::putImpl(const ByteArray &key, const ByteArray &value,
+                                                          uint64_t lifespan, uint64_t maxIdle, bool previousValue,
+                                                          const RetryContext &ctx)
    {
       // Build PUT request body
       // Encode request header + key + expiration + value
@@ -402,18 +454,22 @@ namespace hotrod
          return {};
       };
       // Execute
-      MultiplexedConnection *conn = selectServerForKey(key);
+      std::vector<ServerAddress> tried;
+      std::shared_ptr<MultiplexedConnection> conn = selectServerForKey(key, ctx, &tried);
       auto responseFuture = conn->execute(requestBody, 0x01, 0x02, bodyParser, cacheName_, (previousValue ? 1 : 0));
       // Transform Response → std::optional<ByteArray>
       return std::async(std::launch::deferred,
-                        [responseFuture = std::move(responseFuture)]() mutable -> std::optional<EntryWithMetadata>
+                        [conn, responseFuture = std::move(responseFuture),
+                         tried = std::move(tried),
+                         excluded = ctx.excludeNodes]() mutable -> std::optional<EntryWithMetadata>
                         {
                            Response resp = responseFuture.get();
                            if (resp.error)
-                              std::rethrow_exception(resp.error);
+                              rethrowWithTriedNodes(resp.error, tried, excluded);
                            if (resp.status != 0x00 && resp.status != 0x03)
                               throw HotRodClientException("PUT failed with status: " + std::to_string(resp.status),
-                                                         FailurePhase::ServerError, resp.status);
+                                                         FailurePhase::ServerError, resp.status,
+                                                         unionNodes(excluded, tried));
                            if (resp.status == 0x03 && resp.body.has_value()) {
                               return std::any_cast<EntryWithMetadata>(resp.body);
                            }
@@ -422,6 +478,12 @@ namespace hotrod
    }
 
    std::future<std::optional<EntryWithMetadata>> RemoteCache::remove(const ByteArray &key, bool previousValue)
+   {
+      return removeImpl(key, previousValue, RetryContext{});
+   }
+
+   std::future<std::optional<EntryWithMetadata>> RemoteCache::removeImpl(const ByteArray &key, bool previousValue,
+                                                          const RetryContext &ctx)
    {
       // Build REMOVE request body
       ByteArray requestBody;
@@ -456,16 +518,19 @@ namespace hotrod
       };
 
       // Execute
-      MultiplexedConnection *conn = selectServerForKey(key);
+      std::vector<ServerAddress> tried;
+      std::shared_ptr<MultiplexedConnection> conn = selectServerForKey(key, ctx, &tried);
       auto responseFuture = conn->execute(requestBody, 0x0B, 0x0C, bodyParser, cacheName_, (previousValue ? 1 : 0));
 
       // Transform Response → std::optional<ByteArray>
       return std::async(std::launch::deferred,
-                        [responseFuture = std::move(responseFuture)]() mutable -> std::optional<EntryWithMetadata>
+                        [conn, responseFuture = std::move(responseFuture),
+                         tried = std::move(tried),
+                         excluded = ctx.excludeNodes]() mutable -> std::optional<EntryWithMetadata>
                         {
                            Response resp = responseFuture.get();
                            if (resp.error)
-                              std::rethrow_exception(resp.error);
+                              rethrowWithTriedNodes(resp.error, tried, excluded);
                            if (resp.status == 0x03 && resp.body.has_value())
                               return std::any_cast<EntryWithMetadata>(resp.body);
                            return std::nullopt;
@@ -473,6 +538,12 @@ namespace hotrod
    }
 
    std::future<bool> RemoteCache::removeWithVersion(const ByteArray &key, int64_t version)
+   {
+      return removeWithVersionImpl(key, version, RetryContext{});
+   }
+
+   std::future<bool> RemoteCache::removeWithVersionImpl(const ByteArray &key, int64_t version,
+                                                        const RetryContext &ctx)
    {
       // Build REMOVE_WITH_VERSION request body: key (lp_bytes) + version (8-byte
       // big-endian s8). Mirrors Java RemoveIfUnmodifiedOperation which appends
@@ -508,23 +579,33 @@ namespace hotrod
       };
 
       // Execute
-      MultiplexedConnection *conn = selectServerForKey(key);
+      std::vector<ServerAddress> tried;
+      std::shared_ptr<MultiplexedConnection> conn = selectServerForKey(key, ctx, &tried);
       auto responseFuture = conn->execute(requestBody, 0x0D, 0x0E, bodyParser, cacheName_);
 
       // Transform Response → bool (removed?). Success is 0x00 or 0x03, matching
       // Java's HotRodConstants.isSuccess / RspCode.isUpdated().
       return std::async(std::launch::deferred,
-                        [responseFuture = std::move(responseFuture)]() mutable -> bool
+                        [conn, responseFuture = std::move(responseFuture),
+                         tried = std::move(tried),
+                         excluded = ctx.excludeNodes]() mutable -> bool
                         {
                            Response resp = responseFuture.get();
                            if (resp.error)
-                              std::rethrow_exception(resp.error);
+                              rethrowWithTriedNodes(resp.error, tried, excluded);
                            return resp.status == 0x00 || resp.status == 0x03;
                         });
    }
 
    std::future<bool> RemoteCache::replaceWithVersion(const ByteArray &key, const ByteArray &value,
                                                      int64_t version, uint64_t lifespan, uint64_t maxIdle)
+   {
+      return replaceWithVersionImpl(key, value, version, lifespan, maxIdle, RetryContext{});
+   }
+
+   std::future<bool> RemoteCache::replaceWithVersionImpl(const ByteArray &key, const ByteArray &value,
+                                                     int64_t version, uint64_t lifespan, uint64_t maxIdle,
+                                                     const RetryContext &ctx)
    {
       // Build REPLACE_WITH_VERSION request body:
       //   key (lp_bytes) + time_units (u1) + [lifespan vLong] + [maxIdle vLong]
@@ -580,23 +661,33 @@ namespace hotrod
       };
 
       // Execute
-      MultiplexedConnection *conn = selectServerForKey(key);
+      std::vector<ServerAddress> tried;
+      std::shared_ptr<MultiplexedConnection> conn = selectServerForKey(key, ctx, &tried);
       auto responseFuture = conn->execute(requestBody, 0x09, 0x0A, bodyParser, cacheName_);
 
       // Transform Response → bool (replaced?). Success is 0x00 or 0x03, matching
       // Java's HotRodConstants.isSuccess / RspCode.isUpdated().
       return std::async(std::launch::deferred,
-                        [responseFuture = std::move(responseFuture)]() mutable -> bool
+                        [conn, responseFuture = std::move(responseFuture),
+                         tried = std::move(tried),
+                         excluded = ctx.excludeNodes]() mutable -> bool
                         {
                            Response resp = responseFuture.get();
                            if (resp.error)
-                              std::rethrow_exception(resp.error);
+                              rethrowWithTriedNodes(resp.error, tried, excluded);
                            return resp.status == 0x00 || resp.status == 0x03;
                         });
    }
 
    std::future<std::optional<EntryWithMetadata>> RemoteCache::putIfAbsent(const ByteArray &key, const ByteArray &value,
                                                                           uint64_t lifespan, uint64_t maxIdle, bool previousValue)
+   {
+      return putIfAbsentImpl(key, value, lifespan, maxIdle, previousValue, RetryContext{});
+   }
+
+   std::future<std::optional<EntryWithMetadata>> RemoteCache::putIfAbsentImpl(const ByteArray &key, const ByteArray &value,
+                                                                          uint64_t lifespan, uint64_t maxIdle, bool previousValue,
+                                                                          const RetryContext &ctx)
    {
       // Build PUT_IF_ABSENT request body: identical layout to PUT
       //   key (lp_bytes) + time_units (u1) + [lifespan vLong] + [maxIdle vLong]
@@ -641,17 +732,20 @@ namespace hotrod
                                      FailurePhase::ServerError, status);
       };
 
-      MultiplexedConnection *conn = selectServerForKey(key);
+      std::vector<ServerAddress> tried;
+      std::shared_ptr<MultiplexedConnection> conn = selectServerForKey(key, ctx, &tried);
       auto responseFuture = conn->execute(requestBody, 0x05, 0x06, bodyParser, cacheName_, (previousValue ? 1 : 0));
 
       // Transform Response → optional<EntryWithMetadata>: the existing entry that
       // blocked storage, if returned; nullopt when stored (or no body present).
       return std::async(std::launch::deferred,
-                        [responseFuture = std::move(responseFuture)]() mutable -> std::optional<EntryWithMetadata>
+                        [conn, responseFuture = std::move(responseFuture),
+                         tried = std::move(tried),
+                         excluded = ctx.excludeNodes]() mutable -> std::optional<EntryWithMetadata>
                         {
                            Response resp = responseFuture.get();
                            if (resp.error)
-                              std::rethrow_exception(resp.error);
+                              rethrowWithTriedNodes(resp.error, tried, excluded);
                            if ((resp.status == 0x03 || resp.status == 0x04) && resp.body.has_value())
                               return std::any_cast<EntryWithMetadata>(resp.body);
                            return std::nullopt;
@@ -660,6 +754,13 @@ namespace hotrod
 
    std::future<std::optional<EntryWithMetadata>> RemoteCache::replace(const ByteArray &key, const ByteArray &value,
                                                                       uint64_t lifespan, uint64_t maxIdle, bool previousValue)
+   {
+      return replaceImpl(key, value, lifespan, maxIdle, previousValue, RetryContext{});
+   }
+
+   std::future<std::optional<EntryWithMetadata>> RemoteCache::replaceImpl(const ByteArray &key, const ByteArray &value,
+                                                                      uint64_t lifespan, uint64_t maxIdle, bool previousValue,
+                                                                      const RetryContext &ctx)
    {
       // Build REPLACE request body: identical layout to PUT
       //   key (lp_bytes) + time_units (u1) + [lifespan vLong] + [maxIdle vLong]
@@ -702,17 +803,20 @@ namespace hotrod
                                      FailurePhase::ServerError, status);
       };
 
-      MultiplexedConnection *conn = selectServerForKey(key);
+      std::vector<ServerAddress> tried;
+      std::shared_ptr<MultiplexedConnection> conn = selectServerForKey(key, ctx, &tried);
       auto responseFuture = conn->execute(requestBody, 0x07, 0x08, bodyParser, cacheName_, (previousValue ? 1 : 0));
 
       // Transform Response → optional<EntryWithMetadata>: the replaced (previous)
       // entry, if returned; nullopt when nothing was replaced (or no body).
       return std::async(std::launch::deferred,
-                        [responseFuture = std::move(responseFuture)]() mutable -> std::optional<EntryWithMetadata>
+                        [conn, responseFuture = std::move(responseFuture),
+                         tried = std::move(tried),
+                         excluded = ctx.excludeNodes]() mutable -> std::optional<EntryWithMetadata>
                         {
                            Response resp = responseFuture.get();
                            if (resp.error)
-                              std::rethrow_exception(resp.error);
+                              rethrowWithTriedNodes(resp.error, tried, excluded);
                            if ((resp.status == 0x03 || resp.status == 0x04) && resp.body.has_value())
                               return std::any_cast<EntryWithMetadata>(resp.body);
                            return std::nullopt;
@@ -720,6 +824,11 @@ namespace hotrod
    }
 
    std::future<bool> RemoteCache::containsKey(const ByteArray &key)
+   {
+      return containsKeyImpl(key, RetryContext{});
+   }
+
+   std::future<bool> RemoteCache::containsKeyImpl(const ByteArray &key, const RetryContext &ctx)
    {
       // Build CONTAINS_KEY request body (just the key), like GET.
       ByteArray requestBody;
@@ -740,22 +849,45 @@ namespace hotrod
                                      FailurePhase::ServerError, status);
       };
 
-      MultiplexedConnection *conn = selectServerForKey(key);
+      std::vector<ServerAddress> tried;
+      std::shared_ptr<MultiplexedConnection> conn = selectServerForKey(key, ctx, &tried);
       auto responseFuture = conn->execute(requestBody, 0x0F, 0x10, bodyParser, cacheName_);
 
       // Transform Response → bool (key present?). Success is 0x00.
       return std::async(std::launch::deferred,
-                        [responseFuture = std::move(responseFuture)]() mutable -> bool
+                        [conn, responseFuture = std::move(responseFuture),
+                         tried = std::move(tried),
+                         excluded = ctx.excludeNodes]() mutable -> bool
                         {
                            Response resp = responseFuture.get();
                            if (resp.error)
-                              std::rethrow_exception(resp.error);
+                              rethrowWithTriedNodes(resp.error, tried, excluded);
                            return resp.status == 0x00;
                         });
    }
 
-   MultiplexedConnection *RemoteCache::selectServerForKey(const ByteArray &key)
+   RetryView RemoteCache::excluding(std::vector<ServerAddress> excludeNodes)
    {
+      return RetryView(*this, RetryContext{std::move(excludeNodes)});
+   }
+
+   RetryView RemoteCache::excluding(const HotRodClientException &e)
+   {
+      return RetryView(*this, RetryContext{e.triedNodes});
+   }
+
+   std::shared_ptr<MultiplexedConnection> RemoteCache::selectServerForKey(const ByteArray &key,
+                                                          const RetryContext &ctx,
+                                                          std::vector<ServerAddress> *triedOut)
+   {
+      // Guard the routing/pool state against concurrent topology callbacks on the
+      // read-loop thread (handleTopologyUpdate). Held across connection
+      // acquisition (getConnectionForServer, which may connect()); the caller runs
+      // the actual request on the returned connection *after* the lock is
+      // released. The shared_ptr keeps that connection alive even if a topology
+      // update evicts it from the pool meanwhile (slice 4).
+      std::lock_guard<std::mutex> lock(stateMutex_);
+
       // If hash-aware routing is enabled and hash topology is available
       if (clientIntelligence_ == ClientIntelligence::HASH_DISTRIBUTION_AWARE &&
           consistentHash_.hasHashTopology())
@@ -768,61 +900,71 @@ namespace hotrod
 
          if (!owners.empty())
          {
-            // Try each owner in order (primary first, then backups)
-            for (size_t i = 0; i < owners.size(); i++)
+            // Build the ordered candidate list: owners first, then (when
+            // proxyToNonOwner_ is set, D5) non-owner proxy fallback, minus any
+            // excluded (already-tried) nodes. This routing decision is pure and
+            // unit-tested (orderKeyCandidates); only the connection acquisition
+            // below does I/O.
+            std::vector<ServerAddress> ownerAddrs;
+            ownerAddrs.reserve(owners.size());
+            for (const auto *owner : owners)
+               ownerAddrs.push_back({owner->host, owner->port});
+
+            std::vector<ServerAddress> allAddrs;
+            for (const auto &server : topology_.getServers())
+               allAddrs.push_back({server.host, server.port});
+
+            std::vector<ServerAddress> candidates =
+                orderKeyCandidates(ownerAddrs, allAddrs, ctx.excludeNodes,
+                                   proxyToNonOwner_);
+
+            // Try each candidate in order, recording every node we attempt so
+            // the caller can accumulate triedNodes across retries.
+            std::vector<ServerAddress> tried;
+            for (const auto &cand : candidates)
             {
-               const ServerInfo *owner = owners[i];
+               tried.push_back(cand);
                try
                {
-                  MultiplexedConnection *conn = getConnectionForServer(*owner);
+                  // hashId is unused by getConnectionForServer (host:port only).
+                  std::shared_ptr<MultiplexedConnection> conn =
+                      getConnectionForServer(ServerInfo(cand.host, cand.port, 0));
+                  if (triedOut)
+                     *triedOut = tried;
                   return conn;
                }
                catch (const std::exception &e)
                {
-                  fprintf(stderr, "[WARN] Failed to connect to owner %s:%u: %s\n",
-                          owner->host.c_str(), owner->port, e.what());
-                  // Continue to next owner
+                  fprintf(stderr, "[WARN] Failed to connect to %s:%u: %s\n",
+                          cand.host.c_str(), cand.port, e.what());
+                  // Continue to next candidate
                }
             }
 
-            // All owners failed, try any server in topology
-            fprintf(stderr, "[WARN] All owners failed for segment %d, trying any server\n", segment);
-            const auto &servers = topology_.getServers();
-            for (const auto &server : servers)
-            {
-               // Skip servers we already tried as owners
-               bool alreadyTried = false;
-               for (const auto *owner : owners)
+            // No candidate was reachable. Nothing was sent (BeforeSend). An
+            // owner is "exhausted" if it was tried on this attempt or excluded
+            // (tried on a prior attempt); ownersExhausted holds iff that covers
+            // every owner — i.e. further retry can only reach a proxy.
+            auto attempted = [&](const ServerAddress &a) {
+               return std::find(tried.begin(), tried.end(), a) != tried.end() ||
+                      std::find(ctx.excludeNodes.begin(), ctx.excludeNodes.end(), a) !=
+                          ctx.excludeNodes.end();
+            };
+            bool ownersExhausted = true;
+            for (const auto &o : ownerAddrs)
+               if (!attempted(o))
                {
-                  if (server.host == owner->host && server.port == owner->port)
-                  {
-                     alreadyTried = true;
-                     break;
-                  }
+                  ownersExhausted = false;
+                  break;
                }
-               if (alreadyTried)
-                  continue;
 
-               try
-               {
-                  MultiplexedConnection *conn = getConnectionForServer(server);
-                  return conn;
-               }
-               catch (const std::exception &e)
-               {
-                  fprintf(stderr, "[WARN] Failed to connect to server %s:%u: %s\n",
-                          server.host.c_str(), server.port, e.what());
-                  // Continue to next server
-               }
-            }
-
-            // No servers available: every owner and fallback server was
-            // unreachable. Nothing was sent (BeforeSend); ownersExhausted marks
-            // that all owners were tried. (The retry loop that treats exhaustion
-            // as terminal/non-transient lands in 11b.)
+            fprintf(stderr, "[WARN] No servers available for segment %d\n", segment);
+            if (triedOut)
+               *triedOut = tried;
             throw HotRodClientException("No servers available in topology",
                                         FailurePhase::BeforeSend, std::nullopt,
-                                        {}, /*ownersExhausted=*/true);
+                                        unionNodes(ctx.excludeNodes, tried),
+                                        ownersExhausted);
          }
          else
          {
@@ -831,10 +973,10 @@ namespace hotrod
       }
 
       // Fallback: use default connection
-      return connection_.get();
+      return connection_;
    }
 
-   MultiplexedConnection *RemoteCache::getConnectionForServer(const ServerInfo &server)
+   std::shared_ptr<MultiplexedConnection> RemoteCache::getConnectionForServer(const ServerInfo &server)
    {
       // Create connection pool key
       std::string poolKey = server.host + ":" + std::to_string(server.port);
@@ -846,7 +988,7 @@ namespace hotrod
          // Connection exists, check if it's still connected
          if (it->second->isConnected())
          {
-            return it->second.get();
+            return it->second;
          }
          else
          {
@@ -863,17 +1005,16 @@ namespace hotrod
          this->handleTopologyUpdate(topo, cacheName);
       };
 
-      auto newConnection = std::make_unique<MultiplexedConnection>(server.host, server.port, topologyCallback);
+      auto newConnection = std::make_shared<MultiplexedConnection>(server.host, server.port, topologyCallback);
       newConnection->setProtocolVersion(protocolVersion_);
       newConnection->setClientIntelligence(clientIntelligence_);
 
       // connect() can throw if server is unreachable - let it propagate to caller
       newConnection->connect();
 
-      MultiplexedConnection *connPtr = newConnection.get();
-      connectionPool_[poolKey] = std::move(newConnection);
+      connectionPool_[poolKey] = newConnection;
 
-      return connPtr;
+      return newConnection;
    }
 
    void RemoteCache::cleanupStaleConnections()
