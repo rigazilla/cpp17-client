@@ -33,8 +33,9 @@ Split what you write by *kind*, so each doc keeps exactly one job:
   history-worthy goes here: what changed and *why*, dated milestones, gotchas
   discovered, schema/protocol bugs, superseded decisions. Never rewrite or
   delete an old entry; supersede it with a new dated one.
-- **`README.md`** — only if a *user-facing* fact changed (shipped feature,
-  public API, test numbers). Most commits won't touch it.
+- **`README.md`** — **check it after every commit.** If a *user-facing* fact
+  changed (shipped feature, public API, test numbers, step/milestone status),
+  update it in the same commit so it never drifts from STATUS.md.
 
 If a commit is a legitimate pure docs catch-up (reconciling a prior
 source-only commit), bypass with `git commit --no-verify` — but that should be

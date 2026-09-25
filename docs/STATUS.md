@@ -106,8 +106,8 @@ pull from here next. Step numbers follow
 
   Java ref: `GetWithMetadataOperation`, `ReplaceIfUnmodifiedOperation`. See the
   [step-by-step plan](#plan-metadata-operations-step-10) below.
-- [ ] **Step 11 — Error handling.** Design agreed 2026-09-21 →
-  [`ERROR_HANDLING_DESIGN.md`](ERROR_HANDLING_DESIGN.md). Split:
+- [x] **Step 11 — Error handling — COMPLETE (11a + 11b + 11c).** Design agreed
+  2026-09-21 → [`ERROR_HANDLING_DESIGN.md`](ERROR_HANDLING_DESIGN.md). Split:
   - [x] **11a — Error surfacing** — **shipped 2026-09-25** (11 unit + 3
     integration tests). ERROR response parsing (opcode 0x50) with
     length-prefixed message drained in the read loop (keeps the stream in sync
@@ -135,6 +135,15 @@ pull from here next. Step numbers follow
     after killing the primary owner. **Slice 6 (example):**
     `examples/quickstart/retry.cpp` shows the retry loop and the `proxyToNonOwner`
     clarification.
+  - [x] **11c — Keyless-op retry (ping)** — **shipped 2026-09-25** (3 unit + 3
+    integration tests). Keyless ops mirror the keyed two-tier model: automatic
+    before-send failover across all servers via `selectAnyServer` (deterministic
+    topology order, minus an exclusion set; seed-connection fallback when no
+    topology is known yet), user-decided after-send retry via
+    `cache.excluding(e).ping()`. `ownersExhausted` is always `false` for keyless
+    ops; `selectAnyServer` is generic for future non-key ops.
+    `PingRetryIntegrationTest` (3 tests) + a keyless `pingWithRetry` in the retry
+    example.
   Java ref: `org.infinispan.client.hotrod.exceptions.*`.
 - [ ] **Step 12 — Bulk operations.** `GET_ALL` (0x2F), `PUT_ALL` (0x2D),
   `BULK_GET` (0x1F, iterator-style).
