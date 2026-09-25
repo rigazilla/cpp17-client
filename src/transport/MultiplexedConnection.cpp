@@ -3,6 +3,7 @@
 #include "hotrod/HeaderCodec.h"
 #include "hotrod/HotRodClientException.h"
 #include "hotrod/Codec.h"
+#include "hotrod/SaslAuthenticator.h"
 #include <stdexcept>
 #include <iostream>
 
@@ -30,6 +31,22 @@ void MultiplexedConnection::connect() {
     // Create underlying TCP connection
     connection_ = std::make_unique<Connection>(host_, port_);
     connection_->connect();
+
+    // SASL handshake (synchronous, before the read thread consumes any bytes).
+    // Runs only when authentication is configured; a failure here throws
+    // HotRodClientException and leaves the connection cleanly closed.
+    if (auth_.enabled) {
+        try {
+            SaslAuthenticator authenticator(auth_, host_, port_);
+            ConnectionSaslTransport transport(connection_.get(), protocolVersion_,
+                                              clientIntelligence_, host_, port_);
+            authenticator.authenticate(transport);
+        } catch (...) {
+            connection_->close();
+            connection_.reset();
+            throw;
+        }
+    }
 
     connected_ = true;
     stopReadLoop_ = false;
@@ -81,6 +98,13 @@ void MultiplexedConnection::setClientIntelligence(ClientIntelligence intelligenc
         throw std::runtime_error("Cannot change client intelligence after connect()");
     }
     clientIntelligence_ = intelligence;
+}
+
+void MultiplexedConnection::setAuthentication(const Authentication& auth) {
+    if (connected_) {
+        throw std::runtime_error("Cannot change authentication after connect()");
+    }
+    auth_ = auth;
 }
 
 int32_t MultiplexedConnection::getTopologyId() const {

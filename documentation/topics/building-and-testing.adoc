@@ -1,0 +1,42 @@
+== Building and Testing
+
+NOTE: This chapter is a stub. See `README.md` for full platform-specific
+instructions.
+
+=== Building
+
+[source,shell]
+----
+cmake -S . -B build
+cmake --build build
+----
+
+The build is strict: `-Wall -Wextra -Werror -pedantic`, C++17. The default build
+type is `RelWithDebInfo` so local builds surface the same optimizer/`-Werror`
+warnings as CI.
+
+=== Unit tests
+
+[source,shell]
+----
+./build/unit_tests
+# or
+ctest --test-dir build -R UnitTests --output-on-failure
+----
+
+=== Integration tests
+
+Integration tests drive a real Infinispan server via Docker and are built on
+non-Windows platforms only.
+
+[source,shell]
+----
+ctest --test-dir build --output-on-failure
+----
+
+The SASL/SCRAM auth integration suite (`auth_integration_tests`) starts an
+auth-enabled server via `scripts/start_infinispan_auth.sh` and exercises the
+SCRAM-SHA-1/256/512 round-trip, wrong-password, and no-credentials cases.
+
+CAUTION: The multi-node cluster suites bind fixed host ports (11222/11322/…);
+free 11222 before running them locally.

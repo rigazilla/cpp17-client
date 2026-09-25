@@ -15,6 +15,19 @@ namespace hotrod {
 class SCRAM {
 public:
     /**
+     * SCRAM digest family. Selects the underlying hash for HMAC / PBKDF2 / H,
+     * and therefore the SaltedPassword / key / signature lengths:
+     * SHA-1 = 20, SHA-256 = 32, SHA-512 = 64 bytes.
+     */
+    enum class Digest { SHA1, SHA256, SHA512 };
+
+    /**
+     * Map a SASL mechanism name to its digest.
+     * @throws std::runtime_error if the mechanism is not a supported SCRAM variant
+     */
+    static Digest digestForMechanism(const std::string& mechanism);
+
+    /**
      * Generate a cryptographically secure random nonce.
      * @param length Number of bytes for the nonce
      * @return Base64-encoded nonce
@@ -55,6 +68,7 @@ public:
      * @param nonce Combined nonce from server
      * @param salt Base64-encoded salt
      * @param iterations PBKDF2 iteration count
+     * @param digest SCRAM digest family (defaults to SHA-256)
      * @return Client-final-message
      */
     static std::string createClientFinalMessage(const std::string& password,
@@ -62,7 +76,8 @@ public:
                                                 const std::string& serverFirstMessage,
                                                 const std::string& nonce,
                                                 const std::string& salt,
-                                                int iterations);
+                                                int iterations,
+                                                Digest digest = Digest::SHA256);
 
     /**
      * Verify the server-final-message.
@@ -73,21 +88,26 @@ public:
      * @param authMessage The authentication message (client-first-bare + "," + server-first + "," + client-final-without-proof)
      * @param salt Base64-encoded salt
      * @param iterations PBKDF2 iteration count
+     * @param digest SCRAM digest family (defaults to SHA-256)
      * @return true if server signature is valid
      */
     static bool verifyServerFinalMessage(const std::string& message,
                                         const std::string& password,
                                         const std::string& authMessage,
                                         const std::string& salt,
-                                        int iterations);
+                                        int iterations,
+                                        Digest digest = Digest::SHA256);
 
 private:
-    // PBKDF2-HMAC-SHA256 key derivation
-    static ByteArray pbkdf2(const std::string& password, const ByteArray& salt, int iterations, size_t keyLength);
+    // PBKDF2-HMAC key derivation; output length follows the chosen digest.
+    static ByteArray pbkdf2(const std::string& password, const ByteArray& salt, int iterations, Digest digest);
 
-    // HMAC-SHA256
-    static ByteArray hmacSha256(const ByteArray& key, const std::string& message);
-    static ByteArray hmacSha256(const ByteArray& key, const ByteArray& message);
+    // HMAC keyed by the chosen digest.
+    static ByteArray hmac(const ByteArray& key, const std::string& message, Digest digest);
+    static ByteArray hmac(const ByteArray& key, const ByteArray& message, Digest digest);
+
+    // H (plain hash) with the chosen digest — used for StoredKey.
+    static ByteArray hash(const ByteArray& data, Digest digest);
 
     // Base64 encoding/decoding
     static std::string base64Encode(const ByteArray& data);

@@ -1,0 +1,25 @@
+== Cache Operations
+
+NOTE: This chapter is a stub. See `include/hotrod/RemoteCache.h` for the full,
+current operation set.
+
+Keys and values are `ByteArray`. Every operation is asynchronous and returns a
+`std::future`.
+
+=== Basic operations
+
+[source,cpp]
+----
+cache.put(key, value).get();                 // store
+auto v = cache.get(key).get();               // std::optional<ByteArray>
+bool removed = cache.remove(key).get();      // delete
+cache.ping().get();                          // connectivity check
+----
+
+=== Metadata and version-based (CAS) operations
+
+The client also implements `getWithMetadata`, `putIfAbsent`, `replace`,
+`containsKey`, `removeWithVersion`, and `replaceWithVersion` (Step 10). The
+version returned by `getWithMetadata` is the input to the conditional
+version-based writes. See STATUS.md and the header for exact signatures and
+return types.

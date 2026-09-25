@@ -1,0 +1,26 @@
+= Infinispan Hot Rod C++17 Client Guide
+:toc: left
+:toclevels: 3
+
+This guide covers the Infinispan Hot Rod C++17 client for the Hot Rod binary
+protocol. The client speaks protocol 4.0/4.1, routes keys to their primary owner
+(hash-aware), fails over automatically, and exposes every operation as a
+`std::future`.
+
+NOTE: The single source of truth for *what is implemented today* is
+`docs/STATUS.md` in the repository root. If a chapter here describes a feature as
+a stub, STATUS.md is authoritative for whether it has shipped.
+
+include::topics/getting-started.adoc[]
+
+include::topics/connecting.adoc[]
+
+include::topics/security.adoc[]
+
+include::topics/cache-operations.adoc[]
+
+include::topics/client-intelligence.adoc[]
+
+include::topics/error-handling-and-retry.adoc[]
+
+include::topics/building-and-testing.adoc[]

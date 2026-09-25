@@ -1,0 +1,22 @@
+== Connecting
+
+NOTE: This chapter is a stub. See `include/hotrod/RemoteCache.h` for the full API
+and `examples/quickstart/` for working code.
+
+You create a `RemoteCache` for a seed server and a cache name, tune it with
+setters, then `connect()`:
+
+[source,cpp]
+----
+RemoteCache cache("localhost", 11222, "my-cache");
+cache.setClientIntelligence(ClientIntelligence::HASH_DISTRIBUTION_AWARE);
+cache.setAuthentication("username", "password");   // optional; see Security
+cache.connect();
+// ... operations ...
+cache.disconnect();
+----
+
+All settings (client intelligence, protocol version, authentication) must be
+configured **before** `connect()`. Once connected, the client discovers the rest
+of the cluster from the server's topology updates and pools a connection per
+member.

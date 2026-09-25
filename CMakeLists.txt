@@ -35,6 +35,7 @@ set(SOURCES
     src/codec/Codec.cpp
     src/codec/HeaderCodec.cpp
     src/auth/SCRAM.cpp
+    src/auth/SaslAuthenticator.cpp
     src/topology/TopologyInfo.cpp
     src/hash/MurmurHash3.cpp
     src/hash/ConsistentHash.cpp
@@ -91,6 +92,8 @@ if(GTest_FOUND)
         tests/unit/HashAwareRoutingTest.cpp
         tests/unit/ErrorHandlingTest.cpp
         tests/unit/ServerSelectionTest.cpp
+        tests/unit/AuthCodecTest.cpp
+        tests/unit/SaslAuthenticatorTest.cpp
     )
 
     target_link_libraries(unit_tests
@@ -310,6 +313,18 @@ if(GTest_FOUND)
             # Note: NOT gtest_main - we provide our own main()
     )
 
+    # SASL/SCRAM authentication integration tests (auth-enabled single server)
+    add_executable(auth_integration_tests
+        tests/integration/AuthIntegrationTest.cpp
+    )
+
+    target_link_libraries(auth_integration_tests
+        PRIVATE
+            hotrod-client
+            GTest::gtest
+            # Note: NOT gtest_main - we provide our own main()
+    )
+
     add_test(NAME PingIntegrationTests COMMAND ping_integration_tests)
     add_test(NAME GetIntegrationTests COMMAND get_integration_tests)
     add_test(NAME GetWithMetadataIntegrationTests COMMAND getwithmetadata_integration_tests)
@@ -327,6 +342,7 @@ if(GTest_FOUND)
     add_test(NAME ConcurrentMultiServerTests COMMAND concurrent_multiserver_tests)
     add_test(NAME RetryViewIntegrationTests COMMAND retryview_integration_tests)
     add_test(NAME PingRetryIntegrationTests COMMAND pingretry_integration_tests)
+    add_test(NAME AuthIntegrationTests COMMAND auth_integration_tests)
 
     # Set working directory so scripts can be found
     set_tests_properties(PingIntegrationTests PROPERTIES
@@ -396,6 +412,10 @@ if(GTest_FOUND)
     set_tests_properties(PingRetryIntegrationTests PROPERTIES
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         LABELS "integration;docker;topology;multi-server;retry"
+    )
+    set_tests_properties(AuthIntegrationTests PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        LABELS "integration;docker;auth"
     )
     endif()  # NOT WIN32 (integration tests)
 

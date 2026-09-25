@@ -6,6 +6,7 @@
 #include "HeaderCodec.h"
 #include "ConsistentHash.h"
 #include "RetryContext.h"
+#include "Authentication.h"
 #include <string>
 #include <memory>
 #include <cstdint>
@@ -324,6 +325,43 @@ public:
     }
 
     /**
+     * Configure SASL authentication. Must be called before connect().
+     *
+     * Enables the SASL handshake on every connection the client opens (the seed
+     * connection and every topology-discovered cluster member). Only the SCRAM
+     * family is supported — SCRAM-SHA-1 / SCRAM-SHA-256 / SCRAM-SHA-512 — any
+     * other mechanism throws a HotRodClientException at connect() time.
+     *
+     * For SCRAM only username/password enter the exchange; realm and serverName
+     * are accepted for parity with the Java client but are unused by SCRAM.
+     *
+     * @param username   SASL authentication username
+     * @param password   SASL authentication password
+     * @param realm      Security realm (default "default"; unused by SCRAM)
+     * @param serverName SASL server name (default "infinispan"; unused by SCRAM)
+     * @param mechanism  SASL mechanism (default "SCRAM-SHA-256")
+     */
+    void setAuthentication(const std::string& username,
+                           const std::string& password,
+                           const std::string& realm = "default",
+                           const std::string& serverName = "infinispan",
+                           const std::string& mechanism = "SCRAM-SHA-256") {
+        auth_.enabled = true;
+        auth_.username = username;
+        auth_.password = password;
+        auth_.realm = realm;
+        auth_.serverName = serverName;
+        auth_.mechanism = mechanism;
+    }
+
+    /**
+     * Current authentication configuration (auth_.enabled is false by default).
+     */
+    const Authentication& getAuthentication() const {
+        return auth_;
+    }
+
+    /**
      * Control non-owner proxy fallback for hash-aware routing (Step 11b, D5).
      *
      * When true (the default, matching the Java client), if none of a key's
@@ -443,6 +481,7 @@ private:
     uint8_t protocolVersion_;  // Protocol version (default: VERSION_41)
     ClientIntelligence clientIntelligence_;  // Client intelligence level
     bool proxyToNonOwner_ = true;  // Owner->non-owner fallback in routing (D5)
+    Authentication auth_;  // SASL auth config (disabled by default); applied at connect()
 
     // stateMutex_ guards the routing/pool state below (topology_, consistentHash_,
     // connectionPool_) against concurrent access by the read-loop thread (topology

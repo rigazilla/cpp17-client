@@ -69,6 +69,7 @@ namespace hotrod
    {
       connection_->setProtocolVersion(protocolVersion_);
       connection_->setClientIntelligence(clientIntelligence_);
+      connection_->setAuthentication(auth_);
       connection_->connect();
    }
 
@@ -1078,6 +1079,7 @@ namespace hotrod
       auto newConnection = std::make_shared<MultiplexedConnection>(server.host, server.port, topologyCallback);
       newConnection->setProtocolVersion(protocolVersion_);
       newConnection->setClientIntelligence(clientIntelligence_);
+      newConnection->setAuthentication(auth_);
 
       // connect() can throw if server is unreachable - let it propagate to caller
       newConnection->connect();

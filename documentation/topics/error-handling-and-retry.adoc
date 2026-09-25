@@ -1,0 +1,31 @@
+== Error Handling and Retry
+
+NOTE: This chapter is a stub. The full design lives in
+`docs/ERROR_HANDLING_DESIGN.md`; a runnable example is
+`examples/quickstart/retry.cpp`.
+
+Server errors and transport failures surface as `HotRodClientException` (still
+catchable as `std::runtime_error`). It carries pure data: a `FailurePhase`
+(`BeforeSend` / `AfterSend` / `ServerError`), the server status, the nodes tried,
+and an `ownersExhausted` flag. Two free helpers classify a failure:
+
+* `isTransient(e)` -- is a retry potentially useful?
+* `outcomeUncertain(e)` -- might the operation have taken effect despite the error?
+
+Retry is **user-decided**, not automatic. On a caught exception, feed it back as
+the exclusion set for the next attempt via the bound-view API:
+
+[source,cpp]
+----
+try {
+    cache.put(key, value).get();
+} catch (const HotRodClientException& e) {
+    if (isTransient(e)) {
+        cache.excluding(e).put(key, value).get();  // retry, avoiding tried nodes
+    } else {
+        throw;
+    }
+}
+----
+
+The same `excluding(e)` pattern works for keyless operations such as `ping()`.

@@ -614,3 +614,93 @@ With slices 1–3 done, **Step 11c is complete**: keyless ops mirror the keyed
 two-tier retry model (auto before-send failover, user-decided after-send), the
 implementation (`selectAnyServer`) is generic for future non-key ops, and the
 behaviour is unit-, integration-, and example-covered.
+
+## 2026-09-25 — SASL/SCRAM authentication, end-to-end (whole SCRAM family)
+
+**What shipped.** The client can now authenticate against a secured Infinispan
+server. `RemoteCache::setAuthentication(username, password, realm="default",
+serverName="infinispan", mechanism="SCRAM-SHA-256")` enables a SASL handshake that
+runs on **every** connection the client opens — the seed connection *and* every
+topology-discovered cluster member — inside `MultiplexedConnection::connect()`,
+after the TCP connect and **before** the read-loop thread is spawned (the only
+synchronous window; nothing consumes bytes before it). New public headers:
+`Authentication.h` (pure-data config), `AuthCodec.h` (header-only body
+encode/decode, following the `ServerSelection.h` inline precedent), and
+`SaslAuthenticator.h`; implementation in `src/auth/SaslAuthenticator.cpp`. The
+existing `SCRAM` crypto — previously **dead code** (unit-tested but never on any
+code path) — is now generalized across the digest family and actually driven.
+
+**Why flat setters, not a builder.** Locked with the user: `setAuthentication(...)`
+matches the existing `setClientIntelligence` / `setProtocolVersion` idiom rather
+than introducing a Java-style `ConfigurationBuilder`. A builder / multi-seed model
+stays a possible future thread.
+
+**Why the whole SCRAM family.** The API is mechanism-aware (defaults to
+`SCRAM-SHA-256`). C++ has no JDK-style SASL provider framework, so each mechanism
+is hand-rolled over OpenSSL; the three SCRAM variants share one generalized
+implementation. `SCRAM` was parameterized by a `Digest { SHA1, SHA256, SHA512 }`
+enum → `EVP_MD*`, with PBKDF2/HMAC/H output lengths derived from `EVP_MD_size`
+(SHA-1=20, SHA-256=32, SHA-512=64). The prior SHA-256 behavior stays the default
+and the existing `SCRAMTest.cpp` still passes. Any non-SCRAM mechanism (PLAIN,
+DIGEST-MD5, EXTERNAL, GSSAPI, OAUTHBEARER, …) throws a clear
+`HotRodClientException` ("unsupported SASL mechanism") at connect() time.
+
+**Load-bearing protocol finding — SCRAM is exactly two client turns and the
+client completes on its own side.** Confirmed against the two authoritative
+sources (`AGENTS.md` order: Java client behavior, then Kaitai byte layout):
+
+- **Java** (`AuthHandler` / `AuthOperation`): `AuthOperation.createResponse`
+  returns `complete ? null : challenge`; the loop is driven by the *client* SASL
+  state, not the server's `completed` flag. client-first→server-first
+  (`completed=false`); client-final→server-final. Infinispan/Elytron sends the
+  server-final with **`completed=false`** carrying the `v=` server signature, and
+  expects **no** confirmation round — the client finishes once it has verified
+  that signature (SASL client returns null / nothing more to send).
+- **Kaitai** (`hotrod40.ksy`): mech-list request `0x21` = empty body; mech-list
+  response `0x22` = `vint count` + N×`lp_string`; auth request `0x23` =
+  `lp_string mech` (re-sent every round) + `lp_bytes response`; auth response
+  `0x24` = `u1 completed` + `lp_bytes challenge`.
+
+Two earlier wrong attempts, now recorded so they aren't repeated: (1) requiring
+`completed=true` on the server-final hung the handshake ("SASL exchange did not
+complete") — the server sends `completed=false`; (2) "fixing" that by adding an
+empty confirmation round in a completed-flag loop triggered Elytron `ELY05037`
+("mechanism client refuses to initiate authentication"). The correct behavior is:
+send nothing after verifying the server signature; ignore the server `completed`
+flag. This mirrors Java exactly.
+
+**Testable transport seam.** Hot Rod responses have **no total-length prefix**, so
+a response body can only be consumed by reading its fields in order — the SASL
+driver therefore reads *typed* fields, not a length-delimited blob. To keep the
+state machine unit-testable without a socket, `SaslAuthenticator::authenticate`
+runs against an abstract `SaslTransport` (send + typed reads +
+`readResponseHeader()`); `ConnectionSaslTransport` is the production adapter over a
+live blocking `Connection`, and its `readResponseHeader()` mirrors the read loop's
+header parse (magic / messageId / opcode / status / topology-change marker,
+consuming any topology update so the stream stays aligned) and surfaces server
+ERROR/failed-status as a typed `HotRodClientException`. Unit tests drive a
+`FakeScramServer` that computes the server side with OpenSSL, parameterized across
+SCRAM-SHA-1/256/512, plus mech-not-offered / unsupported-mech /
+bad-server-signature failure paths.
+
+**Server config gotchas (Infinispan 16), discovered while standing up the
+integration fixture.** The SCRAM family derives keys from the *cleartext*
+password, so the realm must store plain-text passwords: a `properties-realm` with
+`plain-text="true"`. A single-port endpoint requires **both** a `hotrod-connector`
+and a `rest-connector` ("There must be a REST route!"), and the connectors nest
+inside `<endpoint>` inside `<endpoints>`. The image entrypoint auto-generates
+`conf/users.properties`, so the test mounts non-default filenames
+(`test-users.properties` / `test-groups.properties`) to avoid a read-only clash.
+Auth succeeding does not create a cache, so the config pre-defines a
+`distributed-cache name="authcache"` the test targets (no admin round-trip on a
+secured server). See `test-configs/infinispan-auth.xml` and
+`scripts/start_infinispan_auth.sh` (starts with `-p 0:11222` for an ephemeral host
+port, avoiding the fixed-port cluster clash noted elsewhere).
+
+**Tests.** +19 unit (`AuthCodecTest` + parameterized `SaslAuthenticatorTest`) and
++5 integration (`AuthIntegrationTest`: SCRAM-SHA-1/256/512 put/get round-trips,
+wrong-password throws at connect, no-credentials-against-secured-server fails),
+all green live against a Dockerized auth-enabled Infinispan 16.0.7. Documented in
+`documentation/topics/security.adoc` (new AsciiDoc user guide,
+`documentation/index.adoc`) with a runnable snippet in
+`examples/quickstart/README.md`.

@@ -1,0 +1,31 @@
+== Getting Started
+
+NOTE: This chapter is a stub. For a complete, runnable example today see
+`examples/quickstart/` and `README.md` in the repository root.
+
+The Hot Rod C++17 client is a static library (`hotrod-client`) built with CMake.
+It requires a C++17 compiler, CMake 3.15+, and OpenSSL 1.1.1+ or 3.x.
+
+A minimal program:
+
+[source,cpp]
+----
+#include "hotrod/RemoteCache.h"
+
+using namespace hotrod;
+
+int main() {
+    RemoteCache cache("localhost", 11222, "my-cache");
+    cache.connect();
+
+    cache.put(ByteArray{'k'}, ByteArray{'v'}).get();
+    auto value = cache.get(ByteArray{'k'}).get();  // std::optional<ByteArray>
+
+    cache.disconnect();
+    return 0;
+}
+----
+
+Keys and values are `ByteArray` (a `std::vector<uint8_t>`); the caller marshals
+its own types. Every operation returns a `std::future`; call `.get()` to block
+for the result.

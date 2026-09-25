@@ -1,0 +1,18 @@
+== Client Intelligence
+
+NOTE: This chapter is a stub. See `include/hotrod/Types.h` (`ClientIntelligence`)
+and `include/hotrod/RemoteCache.h`.
+
+Client intelligence controls how much cluster awareness the client uses:
+
+* `BASIC` -- talk only to the seed server; no topology or routing.
+* `TOPOLOGY_AWARE` -- learn the cluster membership and fail over across it.
+* `HASH_DISTRIBUTION_AWARE` -- additionally route each key straight to its primary
+  owner via consistent hashing (MurmurHash3 x64_32).
+
+[source,cpp]
+----
+cache.setClientIntelligence(ClientIntelligence::HASH_DISTRIBUTION_AWARE);
+----
+
+Set it before `connect()`.

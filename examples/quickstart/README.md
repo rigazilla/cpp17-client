@@ -198,6 +198,37 @@ the retry path (the same scenarios are covered by
 `tests/integration/RetryViewIntegrationTest.cpp` for keyed ops and
 `tests/integration/PingRetryIntegrationTest.cpp` for keyless `ping`).
 
+## Authentication (SASL/SCRAM)
+
+To talk to a **secured** server, configure credentials before `connect()` with
+`setAuthentication(...)`. Nothing else about the API changes — every operation
+then runs over an authenticated connection (the seed connection and every
+cluster member the client discovers):
+
+```cpp
+RemoteCache cache("localhost", 11222, "my-cache");
+
+// Username + password are all SCRAM needs. Mechanism defaults to SCRAM-SHA-256.
+cache.setAuthentication("username", "password");
+
+try {
+    cache.connect();
+} catch (const HotRodClientException& e) {
+    // Wrong credentials / unsupported or unoffered mechanism all surface here.
+    std::cerr << "Authentication failed: " << e.what() << '\n';
+    return 1;
+}
+
+cache.put(key, value).get();   // over an authenticated connection
+```
+
+Supported mechanisms are the SCRAM family — `SCRAM-SHA-256` (default),
+`SCRAM-SHA-1`, `SCRAM-SHA-512`; pass a different one as the fifth argument. For
+SCRAM only username/password enter the exchange (`realm`/`serverName` are accepted
+for parity but unused). Full details and server-config guidance are in
+[`documentation/topics/security.adoc`](../../documentation/topics/security.adoc);
+the end-to-end tests live in `tests/integration/AuthIntegrationTest.cpp`.
+
 ## Files
 
 - `quickstart.cpp` - Basic PUT/GET/REMOVE example

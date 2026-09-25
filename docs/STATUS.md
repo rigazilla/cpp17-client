@@ -33,7 +33,24 @@ _(Full per-session workflow: [`WORKFLOW.md`](WORKFLOW.md).)_
 
 _The 1–3 concrete things to do next. Keep this short and current._
 
-1. **Step 11c COMPLETE — keyless-op retry (ping) shipped (slices 1–3).** Keyless
+1. **SASL/SCRAM authentication COMPLETE — end-to-end for the whole SCRAM
+   family.** `RemoteCache::setAuthentication(username, password, realm="default",
+   serverName="infinispan", mechanism="SCRAM-SHA-256")` (flat setter, matching
+   `setClientIntelligence`) enables a SASL handshake on **every** connection the
+   client opens — the seed connection and each topology-discovered member — run
+   inside `MultiplexedConnection::connect()` before the read loop starts. The
+   `SaslAuthenticator` drives the two-turn SCRAM exchange over a testable
+   `SaslTransport` seam (`ConnectionSaslTransport` in production); `SCRAM` is
+   generalized across `SCRAM-SHA-1/256/512` (OpenSSL EVP, digest-derived
+   lengths). It completes on the client side after verifying the server signature
+   (no confirmation round; ignores the server `completed` flag — mirrors Java
+   `AuthHandler`). Any non-SCRAM mechanism throws a clear `HotRodClientException`
+   at connect(). New public headers: `Authentication.h`, `AuthCodec.h`,
+   `SaslAuthenticator.h`. Documented in `documentation/topics/security.adoc`.
+   Rationale in [`DECISIONS.md`](DECISIONS.md) (2026-09-25 SASL/SCRAM entry).
+   **Next: pick a new roadmap step — Step 12 (bulk ops) or benchmark the
+   multiplexing path.**
+2. **Step 11c COMPLETE — keyless-op retry (ping) shipped (slices 1–3).** Keyless
    operations now mirror the keyed retry strategy: automatic before-send failover
    across all servers, user-decided after-send retry (D2). `ping()` routes through
    `selectAnyServer(ctx, triedOut)`, which orders candidates via
@@ -145,6 +162,17 @@ pull from here next. Step numbers follow
     `PingRetryIntegrationTest` (3 tests) + a keyless `pingWithRetry` in the retry
     example.
   Java ref: `org.infinispan.client.hotrod.exceptions.*`.
+- [x] **SASL/SCRAM authentication — COMPLETE.** End-to-end auth for the whole
+  SCRAM family (`SCRAM-SHA-1/256/512`). `setAuthentication(...)` (flat setter)
+  runs the AUTH_MECH_LIST + two-turn SCRAM handshake on every connection (seed +
+  topology-discovered), inside `MultiplexedConnection::connect()` before the read
+  loop; `SaslAuthenticator` over a testable `SaslTransport` seam; `SCRAM`
+  generalized across the digest family (OpenSSL EVP). Completes on the client
+  side after verifying the server signature (no confirmation round). Non-SCRAM
+  mechanisms throw at connect(). New headers `Authentication.h`, `AuthCodec.h`,
+  `SaslAuthenticator.h`; docs `documentation/topics/security.adoc`; 19 unit +
+  5 integration tests. This supersedes the earlier "SCRAM crypto exists but is
+  dead code" state. Java ref: `AuthHandler` / `AuthOperation`; Kaitai `hotrod40.ksy`.
 - [ ] **Step 12 — Bulk operations.** `GET_ALL` (0x2F), `PUT_ALL` (0x2D),
   `BULK_GET` (0x1F, iterator-style).
 
@@ -171,7 +199,11 @@ multiplexing. See "Working and shipped" below._
 **Working and shipped:**
 - Wire primitives (vInt, vLong, strings, byte arrays)
 - Protocol 4.0 headers (all conditional fields)
-- SCRAM-SHA-256 authentication (RFC 5802, OpenSSL)
+- **SASL/SCRAM authentication (end-to-end)** — `setAuthentication(...)` runs the
+  AUTH_MECH_LIST + two-turn SCRAM handshake on every connection (seed +
+  topology-discovered), for the whole family (`SCRAM-SHA-1/256/512`, RFC 5802,
+  OpenSSL); non-SCRAM mechanisms throw at connect(). See
+  `documentation/topics/security.adoc`
 - Cluster topology awareness (failover, load balancing)
 - Consistent hashing (MurmurHash3 x64_32, seed 9001)
 - Hash-aware routing → primary owner, with automatic failover
@@ -212,10 +244,14 @@ multiplexing. See "Working and shipped" below._
   portability and `-Werror` build parity also landed (Sept 2026).
 
 **Test status (verified 2026-09-25):**
-- Unit: **204/204** passing (`./build/unit_tests`, <1s) — +17 for
-  `ServerSelectionTest` (`orderKeyCandidates` + `unionNodes`, Step 11b slices 1–3;
-  +3 keyless-ordering tests for `selectAnyServer`, Step 11c slice 1)
-- Integration: **84/84** passing across 17 suites (`ctest`, spins up Docker
+- Unit: **223/223** passing (`./build/unit_tests`, <1s) — +19 for the auth work
+  (`AuthCodecTest` body round-trips + `SaslAuthenticatorTest`, a parameterized
+  SCRAM-SHA-1/256/512 handshake driven by a fake OpenSSL server, plus
+  mech-not-offered / unsupported-mech / bad-server-signature failure paths); the
+  earlier +17 for `ServerSelectionTest` (`orderKeyCandidates` + `unionNodes`,
+  Step 11b slices 1–3; +3 keyless-ordering tests for `selectAnyServer`, Step 11c
+  slice 1) still stands
+- Integration: **89/89** passing across 18 suites (`ctest`, spins up Docker
   Infinispan single-server + multi-node clusters), now also green on Linux CI.
   +3 for `RetryViewIntegrationTest` (Step 11b: `excluding()` routes around an
   owner; proxy-disabled owners-exhausted throw; the catch→`excluding(e)` retry
@@ -224,11 +260,15 @@ multiplexing. See "Working and shipped" below._
   to another server; excluding all servers throws BeforeSend with
   `ownersExhausted=false`; the catch→`excluding(e).ping()` loop recovers after the
   first-candidate node is killed) — verified 3/3 this session.
+  +5 for `AuthIntegrationTest` (SASL/SCRAM against an auth-enabled Infinispan 16
+  server started by `scripts/start_infinispan_auth.sh`): SCRAM-SHA-1/256/512
+  put/get round-trips (3, parameterized), wrong-password throws at connect(), and
+  no-credentials-against-a-secured-server fails — verified 5/5 live this session.
   The interlaced distributed tests (`ConcurrentMultiServerTest`) were fixed to
   tolerate a GET racing ahead of its PUT — a `nullopt` is expected, only a
   present-but-wrong value is an error.
 - Full run: `ctest --test-dir build --output-on-failure` → 100% pass
-  (18 ctest tests: 1 unit + 17 integration suites)
+  (19 ctest tests: 1 unit + 18 integration suites)
 - **Concurrency validated (2026-09-25):** the concurrent suites pass 8/8
   (incl. `ConcurrentWithFailover`), and a ThreadSanitizer run (`build-tsan/`)
   reports **no races in production code** — slice-4's `stateMutex_`/`shared_ptr`
@@ -249,6 +289,8 @@ full list (Steps 10–12, benchmarks, TLS, code TODOs).
 | What | Where |
 |------|-------|
 | Public API | `include/hotrod/RemoteCache.h` |
+| Authentication (SASL/SCRAM) | `include/hotrod/Authentication.h`, `AuthCodec.h`, `SaslAuthenticator.h`; `src/auth/SaslAuthenticator.cpp`, `SCRAM.cpp` |
+| User guide (AsciiDoc) | `documentation/index.adoc` + `documentation/topics/` |
 | Retry API (bound view) | `include/hotrod/RetryView.h`, `RetryContext.h`; routing helpers in `ServerSelection.h` |
 | Async transport core | `src/transport/MultiplexedConnection.cpp` |
 | Operations (PING/GET/PUT/REMOVE) | `src/operations/RemoteCache.cpp` |

@@ -3,6 +3,7 @@
 #include "Types.h"
 #include "TopologyInfo.h"
 #include "HeaderCodec.h"
+#include "Authentication.h"
 #include <string>
 #include <map>
 #include <mutex>
@@ -142,6 +143,13 @@ public:
     void setClientIntelligence(ClientIntelligence intelligence);
 
     /**
+     * Set SASL authentication configuration.
+     * Must be called before connect(). When auth.enabled is true, connect() runs
+     * the SASL handshake on the socket before starting the read loop.
+     */
+    void setAuthentication(const Authentication& auth);
+
+    /**
      * Get current topology ID.
      */
     int32_t getTopologyId() const;
@@ -177,6 +185,9 @@ private:
     // Client intelligence and topology
     ClientIntelligence clientIntelligence_{ClientIntelligence::BASIC};
     std::atomic<int32_t> topologyId_{0};
+
+    // SASL authentication (disabled by default). Applied during connect().
+    Authentication auth_;
 
     /**
      * Read loop (runs in dedicated thread).
