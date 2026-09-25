@@ -68,8 +68,11 @@ normal case. Split what you write by *kind*, so each doc keeps one job:
    gotchas discovered, schema/protocol bugs, and design decisions. If future-you
    would want to know why or how something happened, it goes here — not in
    STATUS.md. **Never rewrite old entries**; supersede with a new dated one.
-3. **`README.md`** — update **only if a user-facing fact changed** (a feature
-   shipped, test numbers, public API). Most sessions won't touch it.
+3. **`README.md`** — **check it after every commit.** The README carries a subset
+   of user-facing facts (test counts, shipped features, step/milestone status,
+   public API). If the commit changed any of them, update the README in the *same*
+   commit so it never drifts from STATUS.md. If nothing user-facing changed, a
+   quick glance confirms it and you move on — but the check itself is not optional.
 4. **Commit.** The `pre-commit` hook will block you if source changed and
    STATUS.md wasn't staged (see the rule box at the top of this file).
 

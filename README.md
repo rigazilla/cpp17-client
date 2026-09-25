@@ -2,7 +2,8 @@
 
 A cross-platform C++17 implementation of the Infinispan Hot Rod protocol client.
 
-🎉 **Hash-Aware Routing Complete!** - Smart client with automatic failover.
+🎉 **Smart client** - hash-aware routing, automatic failover, full CRUD +
+metadata ops, typed error handling and user-decided retry (keyed & keyless).
 
 ## Quick Start
 
@@ -46,7 +47,8 @@ The quickstart demonstrates:
 - Clean disconnect
 
 A second example, `retry.cpp`, demonstrates the user-decided retry loop
-(`cache.excluding(e)` on a caught `HotRodClientException`).
+(`cache.excluding(e)` on a caught `HotRodClientException`) for both keyed
+operations and keyless `ping`.
 
 See [`examples/quickstart/README.md`](examples/quickstart/README.md) for full documentation.
 
@@ -112,7 +114,7 @@ ctest -C Release --output-on-failure
 
 ## Testing
 
-### Unit Tests (155 tests)
+### Unit Tests (204 tests)
 ```bash
 cd build
 ./unit_tests
@@ -121,18 +123,20 @@ cd build
 ctest -R UnitTests --output-on-failure
 ```
 
-### Integration Tests (38 tests)
+### Integration Tests (84 tests, 17 suites)
 Requires Docker to run Infinispan server:
 ```bash
 cd build
 
-# Run all integration tests (starts server automatically)
+# Run all integration tests (starts server automatically) — representative subset:
 ./ping_integration_tests
-./get_integration_tests  
+./get_integration_tests
 ./put_integration_tests
 ./remove_integration_tests
-./topology_integration_tests         # Multi-node cluster tests
+./topology_integration_tests            # Multi-node cluster tests
 ./hash_aware_routing_integration_tests  # Smart routing tests
+./retryview_integration_tests           # User-decided retry (keyed)
+./pingretry_integration_tests           # User-decided retry (keyless ping)
 
 # Or run all via CTest
 ctest --output-on-failure
@@ -146,18 +150,20 @@ ctest --output-on-failure
 > Design rationale is in [docs/DECISIONS.md](docs/DECISIONS.md).
 
 **Current Progress**: Full CRUD (PING/GET/PUT/REMOVE) + SCRAM auth + topology
-awareness + hash-aware routing + async multiplexing — all shipped. **Next:**
-metadata / version-based operations (Step 10). See [docs/STATUS.md](docs/STATUS.md)
-for live status. Per-step milestone history (frozen at Step 9) is archived at
+awareness + hash-aware routing + async multiplexing + metadata/version-based
+operations (Step 10) + typed error handling and user-decided retry, keyed and
+keyless (Step 11) — all shipped. **Next:** bulk operations (Step 12) or
+multiplexing benchmarks. See [docs/STATUS.md](docs/STATUS.md) for live status.
+Per-step milestone history (frozen at Step 9) is archived at
 [docs/archive/PROGRESS.md](docs/archive/PROGRESS.md).
 
 _(Step numbers follow [`../hotrod-foundry/ROADMAP.md`](../hotrod-foundry/ROADMAP.md);
 [`docs/STATUS.md`](docs/STATUS.md) is authoritative for which steps are done — not
 any headline count.)_
 
-**Test Results** (verified 2026-09-16):
-- Unit Tests: **145/145 passing** ✅
-- Integration Tests: **46/46 passing** ✅ (against live Infinispan via Docker)
+**Test Results** (verified 2026-09-25):
+- Unit Tests: **204/204 passing** ✅
+- Integration Tests: **84/84 passing** ✅ across 17 suites (against live Infinispan via Docker)
 
 ## Features
 
@@ -177,6 +183,12 @@ any headline count.)_
 - ✅ **GET operation** (read from cache with failover)
 - ✅ **PUT operation** (write to cache with lifespan/maxIdle)
 - ✅ **REMOVE operation** (delete from cache)
+- ✅ **Metadata / version-based operations** (`getWithMetadata`, `putIfAbsent`,
+  `replace`, `containsKey`, `removeWithVersion`, `replaceWithVersion`) (Step 10)
+- ✅ **Typed error handling** (`HotRodClientException` with phase / server status /
+  tried nodes) + `isTransient` / `outcomeUncertain` classification (Step 11a)
+- ✅ **User-decided retry** (`cache.excluding(e)` bound view) for keyed ops and
+  keyless `ping`, with automatic before-send failover (Step 11b/11c)
 - ✅ **Integration test framework** (GoogleTest + Docker + multi-node clusters)
 
 ### Full CRUD with Smart Routing and Async Operations
@@ -220,10 +232,11 @@ for (int i = 0; i < 1000; i++) {
 > the 1–3 immediate items in
 > [⏭ Next steps](docs/STATUS.md#-next-steps-start-here). This is just a summary.
 
-- **Step 10 — Metadata / version-based operations** (next): `getWithMetadata`,
-  `replaceWithVersion`, `removeWithVersion`, `putIfAbsent`, `containsKey`
-- **Step 11 — Error handling**: ERROR response parsing, exception hierarchy, retries
-- **Step 12 — Bulk operations**: `GET_ALL`, `PUT_ALL`, `BULK_GET`
+- ✅ **Step 10 — Metadata / version-based operations** (shipped): `getWithMetadata`,
+  `replaceWithVersion`, `removeWithVersion`, `putIfAbsent`, `replace`, `containsKey`
+- ✅ **Step 11 — Error handling** (shipped): ERROR response parsing, typed exception,
+  user-decided retry (keyed + keyless)
+- **Step 12 — Bulk operations** (next): `GET_ALL`, `PUT_ALL`, `BULK_GET`
 - Also: multiplexing benchmarks, TLS/SSL support
 
 ## Project Structure
@@ -249,8 +262,8 @@ cpp17-client/
 │   ├── hash/                    # MurmurHash3 + consistent hashing
 │   └── operations/              # Hot Rod operations (with failover)
 ├── tests/                       # Test suite
-│   ├── unit/                    # 155 unit tests
-│   └── integration/             # 38 integration tests (multi-node clusters)
+│   ├── unit/                    # 204 unit tests
+│   └── integration/             # 84 integration tests, 17 suites (multi-node clusters)
 ├── examples/                    # Usage examples
 │   └── quickstart/              # Simple GET/PUT/REMOVE example
 ├── scripts/                     # Test infrastructure
@@ -320,10 +333,14 @@ In short, following the hotrod-foundry porting guidelines:
 - ✅ **v0.5.0** (2026-06-12): REMOVE operation complete (Step 9) - **Full CRUD!**
 - ✅ **v0.6.0** (2026-06-17): Topology awareness (Step 4)
 - ✅ **v0.7.0** (2026-06-17): Hash-aware routing with failover - **Smart Client!**
-- 🎯 **v0.8.0** (upcoming): Metadata operations (Step 10)
+- ✅ **v0.8.0** (2026-09-20): Metadata / version-based operations (Step 10)
+- ✅ **v0.9.0** (2026-09-25): Typed error handling + user-decided retry, keyed &
+  keyless (Step 11)
+- 🎯 **v0.10.0** (upcoming): Bulk operations (Step 12)
 
 ---
 
 **Maintained by**: rigazilla  
 **Status**: Active development  
-**Current Step**: Hash-aware routing complete! Smart client with automatic failover. ✅
+**Current Step**: Error handling + user-decided retry complete (Step 11, keyed &
+keyless). Next: bulk operations (Step 12). ✅
