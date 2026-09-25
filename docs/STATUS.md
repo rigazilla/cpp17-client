@@ -4,7 +4,7 @@
 > If any other doc disagrees with this file, this file wins. Point-in-time
 > snapshots live in [`archive/`](archive/) and are historical only.
 >
-> **Last updated:** 2026-09-21
+> **Last updated:** 2026-09-25
 
 ---
 
@@ -33,16 +33,17 @@ _(Full per-session workflow: [`WORKFLOW.md`](WORKFLOW.md).)_
 
 _The 1–3 concrete things to do next. Keep this short and current._
 
-1. **Step 10 is complete.** `getWithMetadata` (0x1B/0x1C), `removeWithVersion`
-   (0x0D/0x0E), `replaceWithVersion` (0x09/0x0A) and the conditionals
-   `putIfAbsent` (0x05/0x06), `replace` (0x07/0x08), `containsKey` (0x0F/0x10)
-   are all **shipped** (see "Working and shipped"). Next roadmap step:
-   **Step 11 — Error handling.** Design agreed 2026-09-21, split into **11a**
-   (typed `HotRodClientException` + ERROR 0x50 parsing — do first) and **11b**
-   (user-decided retry via a defaulted `RetryContext` on the cache). Full design
-   + progress checklist: [`ERROR_HANDLING_DESIGN.md`](ERROR_HANDLING_DESIGN.md);
-   rationale in [`DECISIONS.md`](DECISIONS.md) (2026-09-21 entry). **Start with
-   the 11a checklist.**
+1. **Step 11a is complete.** Typed `HotRodClientException` (pure-data:
+   `FailurePhase` + `serverStatus` + `triedNodes` + `ownersExhausted`) now
+   replaces bare `std::runtime_error` across the ops, and the server ERROR
+   response (opcode 0x50) is parsed and surfaced with its status + message (see
+   "Working and shipped"). Next roadmap step: **Step 11b — user-decided retry**
+   (defaulted `RetryContext` on the ops, exclusion-aware `selectServerForKey`,
+   `proxyToNonOwner` default true, thread-safe pool/topology). Retry policy /
+   idempotency stays the user's call. Full design + progress checklist:
+   [`ERROR_HANDLING_DESIGN.md`](ERROR_HANDLING_DESIGN.md); rationale in
+   [`DECISIONS.md`](DECISIONS.md) (2026-09-21 and 2026-09-25 entries). **Start
+   with the 11b checklist.**
 2. **Benchmark the multiplexing path** — the async rewrite targets 5–10×
    concurrent throughput; this has not been measured yet.
 3. **Small cleanup:** read header "other params" when `paramCount > 0`
@@ -68,13 +69,20 @@ pull from here next. Step numbers follow
   [step-by-step plan](#plan-metadata-operations-step-10) below.
 - [ ] **Step 11 — Error handling.** Design agreed 2026-09-21 →
   [`ERROR_HANDLING_DESIGN.md`](ERROR_HANDLING_DESIGN.md). Split:
-  - [ ] **11a — Error surfacing:** ERROR response parsing (opcode 0x50),
-    length-prefixed message extraction, a typed `HotRodClientException`
-    (pure-data: `retriable` + `FailurePhase` + `triedNodes` + `serverStatus`)
-    replacing bare `std::runtime_error`. Prerequisite for 11b.
+  - [x] **11a — Error surfacing** — **shipped 2026-09-25** (11 unit + 3
+    integration tests). ERROR response parsing (opcode 0x50) with
+    length-prefixed message drained in the read loop (keeps the stream in sync
+    even for orphan responses), surfaced as a typed `HotRodClientException`
+    (pure-data: `FailurePhase` {BeforeSend/AfterSend/ServerError} +
+    `serverStatus` + `triedNodes` + `ownersExhausted`) replacing bare
+    `std::runtime_error`, still catchable as `std::runtime_error`. Two-axis
+    classification helpers: `isTransient()` (futility — library's call) and
+    `outcomeUncertain()` (ambiguity — 0x86/AfterSend). `COMMAND_TIMEOUT` (0x86)
+    is transient **and** outcome-uncertain (intentionally diverges from Java).
   - [ ] **11b — User-decided retry:** defaulted `RetryContext` on the ops
-    (fork 1.b), exclusion-aware `selectServerForKey`, thread-safe pool/topology.
-    Retry policy/idempotency is the user's call, not automatic.
+    (fork 1.b), exclusion-aware `selectServerForKey`, `proxyToNonOwner` default
+    true, thread-safe pool/topology. Retry policy/idempotency is the user's
+    call, not automatic.
   Java ref: `org.infinispan.client.hotrod.exceptions.*`.
 - [ ] **Step 12 — Bulk operations.** `GET_ALL` (0x2F), `PUT_ALL` (0x2D),
   `BULK_GET` (0x1F, iterator-style).
@@ -119,6 +127,13 @@ multiplexing. See "Working and shipped" below._
 - **replace** (0x07/0x08) — store only if key present; returns
   `future<optional<EntryWithMetadata>>` (replaced entry when `previousValue` set)
 - **containsKey** (0x0F/0x10) — key-existence test; returns `future<bool>`
+- **Typed error surfacing (Step 11a):** server ERROR responses (opcode 0x50)
+  are parsed (status + length-prefixed message) and thrown as
+  `HotRodClientException` — a pure-data exception carrying `FailurePhase`,
+  `serverStatus`, `triedNodes`, `ownersExhausted`; still catchable as
+  `std::runtime_error`. Free helpers `isTransient()` / `outcomeUncertain()`
+  classify futility vs ambiguity. The ERROR body is drained in the read loop so
+  the connection stays usable after a server error (no stream desync)
 - **Async API:** all operations return `std::future` / `std::optional`
 - **MultiplexedConnection:** true async — dedicated read-loop thread,
   `messageId → promise` pending map, `execute()` used by all four operations.
@@ -130,14 +145,15 @@ multiplexing. See "Working and shipped" below._
   Docker daemon; Windows doesn't build the integration tests). Windows/MSVC
   portability and `-Werror` build parity also landed (Sept 2026).
 
-**Test status (verified 2026-09-20):**
-- Unit: **176/176** passing (`./build/unit_tests`, <1s)
-- Integration: **75/75** passing across 14 suites (`ctest`, spins up Docker
+**Test status (verified 2026-09-25):**
+- Unit: **187/187** passing (`./build/unit_tests`, <1s)
+- Integration: **78/78** passing across 15 suites (`ctest`, spins up Docker
   Infinispan single-server + multi-node clusters), now also green on Linux CI.
   The interlaced distributed tests (`ConcurrentMultiServerTest`) were fixed to
   tolerate a GET racing ahead of its PUT — a `nullopt` is expected, only a
   present-but-wrong value is an error.
-- Full run: `ctest --test-dir build --output-on-failure` → 100% pass (10 ctest targets)
+- Full run: `ctest --test-dir build --output-on-failure` → 100% pass
+  (16 ctest tests: 1 unit + 15 integration suites)
 - **Local caveat:** the multi-node cluster suites bind fixed host ports
   `11222/11322/11422/11522`; free `11222` (e.g. stop the `memory-service`
   Infinispan) before running them locally, or they fail with "port is already

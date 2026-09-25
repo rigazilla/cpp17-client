@@ -173,3 +173,59 @@ hook (rejected — a warning is just convention with extra steps); leaving
 history in STATUS.md (rejected — it's the source of the drift). Existing
 historical narrative already in STATUS.md is left in place (not migrated); the
 split is forward-looking.
+
+## 2026-09-25 — Step 11a shipped: two-axis error model; 0x86 transient (diverges from Java)
+
+**What:** Step 11a (error surfacing) is implemented and tested (11 unit + 3
+integration; full suite green: 187 unit, 78 integration across 15 suites).
+`HotRodClientException` (in `include/hotrod/HotRodClientException.h`) is a
+pure-data exception extending `std::runtime_error` with `FailurePhase phase`
+{BeforeSend, AfterSend, ServerError}, `std::optional<uint8_t> serverStatus`,
+`std::vector<ServerAddress> triedNodes`, and `bool ownersExhausted`. Server
+ERROR responses (opcode 0x50) are now parsed and surfaced; `RemoteCache`'s bare
+`throw std::runtime_error(...)` sites became typed throws
+(`FailurePhase::ServerError` + status). Status constants `REQUEST_PARSING_ERROR`
+(0x84), `NODE_SUSPECTED` (0x87), `ILLEGAL_LIFECYCLE_STATE` (0x88) were added to
+`HeaderCodec.h`.
+
+**Decisions (refine the 2026-09-21 design):**
+1. **Two orthogonal axes, no stored `retriable` bool.** Instead of baking a
+   retriable flag into the exception, classification is derived by free helpers:
+   `isTransient(e)` = *futility* ("is a retry worth it?" — the library's call)
+   and `outcomeUncertain(e)` = *ambiguity/safety* ("might the op have applied?"
+   — the user's call). `isTransient`: BeforeSend & AfterSend → true;
+   ServerError → `isTransientStatus(status)` (0x86/0x87/0x88 transient,
+   0x81–0x85 permanent). `outcomeUncertain`: AfterSend, or ServerError with
+   0x86. This replaces the design's earlier `retriable` field.
+2. **`COMMAND_TIMEOUT` (0x86) is transient *and* outcome-uncertain — intentionally
+   diverges from Java** (Java does not treat it as retriable). Rationale: with
+   the two-axis model the ambiguity is carried separately by
+   `outcomeUncertain()`, so marking 0x86 transient just says "a retry may
+   succeed elsewhere" without hiding that the op may have already applied — the
+   user still decides via `outcomeUncertain()`.
+3. **`proxyToNonOwner` client config, default `true`** (matches Java's non-owner
+   fallback via `OperationDispatcher.addressForObject` → `balancer.nextServer`).
+   Deferred to 11b (it governs retry routing, not surfacing).
+
+**Why it matters / gotcha found:** the old read loop treated ERROR 0x50 as an
+"opcode mismatch" **and left the length-prefixed error message unread**,
+desyncing the socket for every subsequent response on that connection. The fix
+drains the ERROR body in `readLoop` *before* the pending-request lookup (so even
+an orphan ERROR keeps the stream in sync). Proven by the
+`ConnectionUsableAfterServerError` integration test: trigger an ERROR on a
+missing cache, then PUT/GET round-trip on a real cache over the *same*
+connection succeeds. (Also learned along the way: the server's default cache
+isn't configured, so a missing/undefined cache returns status 0x84
+`CacheNotFoundException` — permanent under the classification above.)
+
+**Java cross-check (Explore):** non-owner fallback confirmed; Java default
+`max_retries` = 3 (`ConfigurationProperties.DEFAULT_MAX_RETRIES`); Java's
+retriable set is `RemoteNodeSuspectException` (0x87),
+`RemoteIllegalLifecycleStateException` (0x88), and `TransportException`
+(no status) — we additionally treat 0x86 as transient per decision 2, and make
+retry user-decided rather than automatic (2026-09-21 entry).
+
+**Alternatives:** store a `retriable` bool on the exception (rejected — conflates
+the two axes and forces the library to pre-judge user idempotency); follow Java
+and treat 0x86 as non-retriable (rejected — the ambiguity is already carried by
+`outcomeUncertain()`, so the extra futility signal is safe and useful).

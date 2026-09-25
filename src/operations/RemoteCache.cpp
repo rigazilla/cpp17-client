@@ -1,5 +1,6 @@
 #include "hotrod/RemoteCache.h"
 #include "hotrod/Codec.h"
+#include "hotrod/HotRodClientException.h"
 #include <stdexcept>
 #include <set>
 
@@ -81,7 +82,8 @@ namespace hotrod
       {
          if (status != 0x00)
          {
-            throw std::runtime_error("PING failed with status: " + std::to_string(status));
+            throw HotRodClientException("PING failed with status: " + std::to_string(status),
+                                        FailurePhase::ServerError, status);
          }
          // PING response body (Protocol 3.0+):
          // - key_type (media_type)
@@ -234,7 +236,8 @@ namespace hotrod
          }
          if (status != 0x00)
          {
-            throw std::runtime_error("GET failed with status: " + std::to_string(status));
+            throw HotRodClientException("GET failed with status: " + std::to_string(status),
+                                        FailurePhase::ServerError, status);
          }
 
          // Read value (lp_bytes: vInt length + bytes)
@@ -288,7 +291,8 @@ namespace hotrod
          }
          if (status != 0x00)
          {
-            throw std::runtime_error("GET_WITH_METADATA failed with status: " + std::to_string(status));
+            throw HotRodClientException("GET_WITH_METADATA failed with status: " + std::to_string(status),
+                                        FailurePhase::ServerError, status);
          }
 
          // On success the body is: entry_metadata (flag + optional expiration + version)
@@ -408,7 +412,8 @@ namespace hotrod
                            if (resp.error)
                               std::rethrow_exception(resp.error);
                            if (resp.status != 0x00 && resp.status != 0x03)
-                              throw std::runtime_error("PUT failed with status: " + std::to_string(resp.status));
+                              throw HotRodClientException("PUT failed with status: " + std::to_string(resp.status),
+                                                         FailurePhase::ServerError, resp.status);
                            if (resp.status == 0x03 && resp.body.has_value()) {
                               return std::any_cast<EntryWithMetadata>(resp.body);
                            }
@@ -446,7 +451,8 @@ namespace hotrod
          {
             return {};
          }
-         throw std::runtime_error("REMOVE failed with status: " + std::to_string(status));
+         throw HotRodClientException("REMOVE failed with status: " + std::to_string(status),
+                                     FailurePhase::ServerError, status);
       };
 
       // Execute
@@ -497,7 +503,8 @@ namespace hotrod
          {
             return {};
          }
-         throw std::runtime_error("REMOVE_WITH_VERSION failed with status: " + std::to_string(status));
+         throw HotRodClientException("REMOVE_WITH_VERSION failed with status: " + std::to_string(status),
+                                     FailurePhase::ServerError, status);
       };
 
       // Execute
@@ -568,7 +575,8 @@ namespace hotrod
          {
             return {};
          }
-         throw std::runtime_error("REPLACE_WITH_VERSION failed with status: " + std::to_string(status));
+         throw HotRodClientException("REPLACE_WITH_VERSION failed with status: " + std::to_string(status),
+                                     FailurePhase::ServerError, status);
       };
 
       // Execute
@@ -629,7 +637,8 @@ namespace hotrod
          {
             return {};
          }
-         throw std::runtime_error("PUT_IF_ABSENT failed with status: " + std::to_string(status));
+         throw HotRodClientException("PUT_IF_ABSENT failed with status: " + std::to_string(status),
+                                     FailurePhase::ServerError, status);
       };
 
       MultiplexedConnection *conn = selectServerForKey(key);
@@ -689,7 +698,8 @@ namespace hotrod
          {
             return {};
          }
-         throw std::runtime_error("REPLACE failed with status: " + std::to_string(status));
+         throw HotRodClientException("REPLACE failed with status: " + std::to_string(status),
+                                     FailurePhase::ServerError, status);
       };
 
       MultiplexedConnection *conn = selectServerForKey(key);
@@ -726,7 +736,8 @@ namespace hotrod
          {
             return {};
          }
-         throw std::runtime_error("CONTAINS_KEY failed with status: " + std::to_string(status));
+         throw HotRodClientException("CONTAINS_KEY failed with status: " + std::to_string(status),
+                                     FailurePhase::ServerError, status);
       };
 
       MultiplexedConnection *conn = selectServerForKey(key);
@@ -805,8 +816,13 @@ namespace hotrod
                }
             }
 
-            // No servers available
-            throw std::runtime_error("No servers available in topology");
+            // No servers available: every owner and fallback server was
+            // unreachable. Nothing was sent (BeforeSend); ownersExhausted marks
+            // that all owners were tried. (The retry loop that treats exhaustion
+            // as terminal/non-transient lands in 11b.)
+            throw HotRodClientException("No servers available in topology",
+                                        FailurePhase::BeforeSend, std::nullopt,
+                                        {}, /*ownersExhausted=*/true);
          }
          else
          {

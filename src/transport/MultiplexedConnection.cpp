@@ -1,6 +1,7 @@
 #include "hotrod/MultiplexedConnection.h"
 #include "hotrod/Connection.h"
 #include "hotrod/HeaderCodec.h"
+#include "hotrod/HotRodClientException.h"
 #include "hotrod/Codec.h"
 #include <stdexcept>
 #include <iostream>
@@ -95,7 +96,9 @@ std::future<Response> MultiplexedConnection::execute(
     int32_t flags)
 {
     if (!connected_) {
-        throw std::runtime_error("Not connected");
+        // Nothing has been sent — always safe to retry (any op).
+        throw HotRodClientException("Not connected", FailurePhase::BeforeSend,
+                                    std::nullopt, {{host_, port_}});
     }
 
     // Generate unique message ID
@@ -122,13 +125,17 @@ std::future<Response> MultiplexedConnection::execute(
     try {
         std::lock_guard<std::mutex> lock(writeMutex_);
         connection_->send(completeRequest);
-    } catch (...) {
+    } catch (const std::exception& e) {
         // Remove pending on write error
         {
             std::lock_guard<std::mutex> lock(pendingMutex_);
             pending_.erase(msgId);
         }
-        throw;
+        // A partial write may already have reached the server — be conservative
+        // and treat this as AfterSend (ambiguous), not BeforeSend.
+        throw HotRodClientException(std::string("Send failed: ") + e.what(),
+                                    FailurePhase::AfterSend, std::nullopt,
+                                    {{host_, port_}});
     }
 
     return future;
@@ -173,6 +180,14 @@ void MultiplexedConnection::readLoop() {
                 topologyUpdate = std::move(topo);
             }
 
+            // 1b. Server ERROR response (0x50): the body is a length-prefixed
+            // error message. Read it NOW — before the pending lookup — so the
+            // stream stays in sync even if the request has no waiter (orphan).
+            std::optional<std::string> errorMessage;
+            if (opcode == Opcode::ERROR_RESPONSE) {
+                errorMessage = connection_->receiveString();
+            }
+
             // 2. Find pending request
             std::unique_ptr<PendingRequest> pending;
             {
@@ -192,13 +207,30 @@ void MultiplexedConnection::readLoop() {
                 onTopologyUpdate_(*topologyUpdate, pending->cacheName);
             }
 
+            // 2b. Deliver server ERROR (0x50) as a typed exception, skipping the
+            // opcode/body checks below (the ERROR opcode never matches expected).
+            if (errorMessage) {
+                Response resp;
+                resp.status = status;
+                resp.error = std::make_exception_ptr(HotRodClientException(
+                    "Server error (status " + std::to_string(status) + "): " + *errorMessage,
+                    FailurePhase::ServerError, status, {{host_, port_}}));
+                resp.topologyUpdate = std::move(topologyUpdate);
+                pending->promise.set_value(std::move(resp));
+                continue;
+            }
+
             // 3. Validate opcode
             if (opcode != pending->expectedOpcode) {
                 Response resp;
-                resp.error = std::make_exception_ptr(
-                    std::runtime_error("Opcode mismatch: expected " +
-                                     std::to_string(pending->expectedOpcode) +
-                                     ", got " + std::to_string(opcode)));
+                // Protocol-level mismatch: we got a reply, but the wrong one.
+                // Not a server ERROR status, and not worth retrying → ServerError
+                // phase with no status makes isTransient() false.
+                resp.error = std::make_exception_ptr(HotRodClientException(
+                    "Opcode mismatch: expected " +
+                        std::to_string(pending->expectedOpcode) +
+                        ", got " + std::to_string(opcode),
+                    FailurePhase::ServerError, std::nullopt, {{host_, port_}}));
                 pending->promise.set_value(std::move(resp));
                 continue;
             }
@@ -268,7 +300,10 @@ ByteArray MultiplexedConnection::buildRequest(
 
 void MultiplexedConnection::closeAllPending(const std::string& errorMsg) {
     std::lock_guard<std::mutex> lock(pendingMutex_);
-    auto error = std::make_exception_ptr(std::runtime_error(errorMsg));
+    // These requests were already sent; the connection dropped before a response
+    // arrived → AfterSend (ambiguous, may have applied on the server).
+    auto error = std::make_exception_ptr(HotRodClientException(
+        errorMsg, FailurePhase::AfterSend, std::nullopt, {{host_, port_}}));
 
     for (auto& [msgId, pending] : pending_) {
         Response resp;
