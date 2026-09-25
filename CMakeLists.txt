@@ -89,6 +89,7 @@ if(GTest_FOUND)
         tests/unit/ReplaceTest.cpp
         tests/unit/ContainsKeyTest.cpp
         tests/unit/HashAwareRoutingTest.cpp
+        tests/unit/ErrorHandlingTest.cpp
     )
 
     target_link_libraries(unit_tests
@@ -153,6 +154,10 @@ if(GTest_FOUND)
 
     add_executable(containskey_integration_tests
         tests/integration/ContainsKeyIntegrationTest.cpp
+    )
+
+    add_executable(errorhandling_integration_tests
+        tests/integration/ErrorHandlingIntegrationTest.cpp
     )
 
     # Topology integration tests (multi-server cluster)
@@ -235,6 +240,13 @@ if(GTest_FOUND)
             # Note: NOT gtest_main - we provide our own main()
     )
 
+    target_link_libraries(errorhandling_integration_tests
+        PRIVATE
+            hotrod-client
+            GTest::gtest
+            # Note: NOT gtest_main - we provide our own main()
+    )
+
     target_link_libraries(topology_integration_tests
         PRIVATE
             hotrod-client
@@ -283,6 +295,7 @@ if(GTest_FOUND)
     add_test(NAME PutIfAbsentIntegrationTests COMMAND putifabsent_integration_tests)
     add_test(NAME ReplaceIntegrationTests COMMAND replace_integration_tests)
     add_test(NAME ContainsKeyIntegrationTests COMMAND containskey_integration_tests)
+    add_test(NAME ErrorHandlingIntegrationTests COMMAND errorhandling_integration_tests)
     add_test(NAME TopologyIntegrationTests COMMAND topology_integration_tests)
     add_test(NAME ConcurrentClientsTests COMMAND concurrent_clients_tests)
     add_test(NAME HashAwareRoutingIntegrationTests COMMAND hash_aware_routing_integration_tests)
@@ -326,6 +339,10 @@ if(GTest_FOUND)
         LABELS "integration;docker"
     )
     set_tests_properties(ContainsKeyIntegrationTests PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        LABELS "integration;docker"
+    )
+    set_tests_properties(ErrorHandlingIntegrationTests PROPERTIES
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         LABELS "integration;docker"
     )

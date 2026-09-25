@@ -64,8 +64,11 @@ namespace Status {
     const uint8_t INVALID_MAGIC_OR_MESSAGE_ID = 0x81;
     const uint8_t UNKNOWN_COMMAND = 0x82;
     const uint8_t UNKNOWN_VERSION = 0x83;
+    const uint8_t REQUEST_PARSING_ERROR = 0x84;
     const uint8_t SERVER_ERROR = 0x85;
     const uint8_t COMMAND_TIMEOUT = 0x86;
+    const uint8_t NODE_SUSPECTED = 0x87;
+    const uint8_t ILLEGAL_LIFECYCLE_STATE = 0x88;
 }
 
 /**
